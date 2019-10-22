@@ -1094,10 +1094,14 @@ def worker(args):
         }
         celery_app = Celery(
             conf.get(section, 'CELERY_APP_NAME'), config_source=celery_config)
+        queues = conf.get(section, 'DEFAULT_QUEUE')
+        concurrency = conf.getint(section, 'WORKER_CONCURRENCY')
     else:
         print("Starting worker for execute tasks")
         section = "celery"
         from airflow.executors.celery_executor import app as celery_app
+        queues = args.queues
+        concurrency = args.concurrency
 
     autoscale = args.autoscale
     if autoscale is None and conf.has_option(section, "worker_autoscale"):
@@ -1106,8 +1110,8 @@ def worker(args):
     options = {
         'optimization': 'fair',
         'O': 'fair',
-        'queues': args.queues,
-        'concurrency': args.concurrency,
+        'queues': queues,
+        'concurrency': concurrency,
         'autoscale': autoscale,
         'hostname': args.celery_hostname,
         'loglevel': conf.get('core', 'LOGGING_LEVEL'),
@@ -1888,7 +1892,7 @@ class CLIFactory(object):
                 "of the code."),
             action="store_true"),
         'is_dagfileprocess': Arg(
-            ("--is_dagfileprocess"),
+            ("--is_dagfileprocess",),
             help="run a worker that is used for dag files process",
             action="store_true"),
         'queues': Arg(
