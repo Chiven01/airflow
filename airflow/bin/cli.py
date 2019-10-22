@@ -1071,13 +1071,37 @@ def worker(args):
         log.error("Worker exiting... database connection precheck failed! ")
         sys.exit(1)
 
-    # Celery worker
-    from airflow.executors.celery_executor import app as celery_app
     from celery.bin import worker
+    from celery import Celery
+
+    # Celery worker
+    if args.is_dagfileprocess:
+        print("Starting worker for dag file processing")
+        section = "dagfileprocessor_celery"
+        broker_url = conf.get(section, 'BROKER_URL')
+        broker_transport_options = conf.getsection('celery_broker_transport_options')
+        celery_config = {
+            'accept_content': ['json', 'pickle'],
+            'event_serializer': 'json',
+            'worker_prefetch_multiplier': 1,
+            'task_acks_late': True,
+            'task_default_queue': conf.get(section, 'DEFAULT_QUEUE'),
+            'task_default_exchange': conf.get(section, 'DEFAULT_QUEUE'),
+            'broker_url': broker_url,
+            'broker_transport_options': broker_transport_options,
+            'result_backend': conf.get(section, 'RESULT_BACKEND'),
+            'worker_concurrency': conf.getint(section, 'WORKER_CONCURRENCY'),
+        }
+        celery_app = Celery(
+            conf.get(section, 'CELERY_APP_NAME'), config_source=celery_config)
+    else:
+        print("Starting worker for execute tasks")
+        section = "celery"
+        from airflow.executors.celery_executor import app as celery_app
 
     autoscale = args.autoscale
-    if autoscale is None and conf.has_option("celery", "worker_autoscale"):
-        autoscale = conf.get("celery", "worker_autoscale")
+    if autoscale is None and conf.has_option(section, "worker_autoscale"):
+        autoscale = conf.get(section, "worker_autoscale")
     worker = worker.worker(app=celery_app)
     options = {
         'optimization': 'fair',
@@ -1089,8 +1113,8 @@ def worker(args):
         'loglevel': conf.get('core', 'LOGGING_LEVEL'),
     }
 
-    if conf.has_option("celery", "pool"):
-        options["pool"] = conf.get("celery", "pool")
+    if conf.has_option(section, "pool"):
+        options["pool"] = conf.get(section, "pool")
 
     if args.daemon:
         pid, stdout, stderr, log_file = setup_locations("worker",
@@ -1863,6 +1887,10 @@ class CLIFactory(object):
                 "to the workers, instead of letting workers run their version "
                 "of the code."),
             action="store_true"),
+        'is_dagfileprocess': Arg(
+            ("--is_dagfileprocess"),
+            help="run a worker that is used for dag files process",
+            action="store_true"),
         'queues': Arg(
             ("-q", "--queues"),
             help="Comma delimited list of queues to serve",
@@ -2132,7 +2160,7 @@ class CLIFactory(object):
             'func': worker,
             'help': "Start a Celery worker node",
             'args': ('do_pickle', 'queues', 'concurrency', 'celery_hostname',
-                     'pid', 'daemon', 'stdout', 'stderr', 'log_file', 'autoscale'),
+                     'pid', 'daemon', 'stdout', 'stderr', 'log_file', 'autoscale', 'is_dagfileprocess'),
         }, {
             'func': flower,
             'help': "Start a Celery Flower",
