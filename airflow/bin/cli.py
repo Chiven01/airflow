@@ -471,7 +471,6 @@ def _run(args, dag, ti):
         executor.heartbeat()
         executor.end()
 
-
 @cli_utils.action_logging
 def run(args, dag=None):
     if dag:
@@ -1044,33 +1043,19 @@ def worker(args):
 
     # Celery worker
     from celery.bin import worker
-    from celery import Celery
 
     if args.is_dagfileprocess:
+        from airflow.dagfile_process.processor import app as celery_app
+
         print("Starting worker for dag file processing")
         section = "dagfileprocessor_celery"
-        broker_url = conf.get(section, 'BROKER_URL')
-        broker_transport_options = conf.getsection('celery_broker_transport_options')
-        celery_config = {
-            'accept_content': ['json', 'pickle'],
-            'event_serializer': 'json',
-            'worker_prefetch_multiplier': 1,
-            'task_acks_late': True,
-            'task_default_queue': conf.get(section, 'DEFAULT_QUEUE'),
-            'task_default_exchange': conf.get(section, 'DEFAULT_QUEUE'),
-            'broker_url': broker_url,
-            'broker_transport_options': broker_transport_options,
-            'result_backend': conf.get(section, 'RESULT_BACKEND'),
-            'worker_concurrency': conf.getint(section, 'WORKER_CONCURRENCY'),
-        }
-        celery_app = Celery(
-            conf.get(section, 'CELERY_APP_NAME'), config_source=celery_config)
         queues = conf.get(section, 'DEFAULT_QUEUE')
         concurrency = conf.getint(section, 'WORKER_CONCURRENCY')
     else:
+        from airflow.executors.celery_executor import app as celery_app
+
         print("Starting worker for execute tasks")
         section = "celery"
-        from airflow.executors.celery_executor import app as celery_app
         queues = args.queues
         concurrency = args.concurrency
 
