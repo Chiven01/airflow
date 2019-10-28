@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import os
+import pika
+import json
 
 from celery import Celery
 from airflow import configuration as conf
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow import jobs, settings
-from airflow.utils.db import provide_session
 
 section = "dagfileprocessor_celery"
 broker_url = conf.get(section, 'BROKER_URL')
@@ -22,9 +23,36 @@ celery_config = {
     'broker_transport_options': broker_transport_options,
     'result_backend': conf.get(section, 'RESULT_BACKEND'),
     'worker_concurrency': conf.getint(section, 'WORKER_CONCURRENCY'),
+    'result_expires': conf.getint(section, 'RESULT_EXPIRES'),
 }
 app = Celery(
     conf.get(section, 'CELERY_APP_NAME'), config_source=celery_config)
+
+
+QUEUE = 'python_conn_test'
+
+def get_connection():
+    HOST = '10.142.106.205'
+    PORT = '5672'
+    USER = 'airflow'
+    PASS = 'airflow'
+
+    #need to process ConnectionBlockedTimeout
+    conn = pika.BlockingConnection(
+           pika.ConnectionParameters(HOST,
+                                     PORT,
+                                     credentials=pika.PlainCredentials(USER, PASS),
+                                     blocked_connection_timeout=2))
+    return conn
+
+def productor(body):
+    conn = get_connection()
+    channel = conn.channel()
+    channel.queue_declare(queue=QUEUE)
+    channel.basic_publish(exchange='',
+                          routing_key=QUEUE,
+                          body=body)
+    conn.close()
 
 @app.task
 def file_processor(do_pickle, dag_ids, dag_contents):
@@ -46,7 +74,16 @@ def file_processor(do_pickle, dag_ids, dag_contents):
 
     settings.configure_orm()
     scheduler_job = jobs.SchedulerJob(dag_ids=dag_ids, log=log)
-    result = scheduler_job.process_file(file_path, do_pickle)
-    log.debug(result.__str__())
+    results = scheduler_job.process_file(file_path, do_pickle)
+    log.info("File %s's processing has finished , send back simpledags now.", file_path)
+
+    try:
+        for result in results:
+            body = json.dumps(result.__dict__)
+            productor(body)
+        log.debug("Successed when send samepledags to rabbitmq.")
+    except:
+        log.debug("Failed when send samepledags to rabbitmq.")
+
 
 
