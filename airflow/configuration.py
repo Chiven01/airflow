@@ -662,3 +662,25 @@ for func in [load_test_config, get, getboolean, getfloat, getint, has_option,
         "the configuration module is deprecated. Please access the "
         "configuration from the 'configuration.conf' object via "
         "'conf.{f.__name__}'".format(f=func))
+
+
+AIRFLOW_TMP = AIRFLOW_HOME + '/tmp'
+AIRFLOW_SVN = AIRFLOW_HOME + '/svn'
+mkdir_p(AIRFLOW_TMP)
+mkdir_p(AIRFLOW_SVN)
+
+HADOOP_CONF_URL = "http://svn.sogou-inc.com/svn/sogouime/DataAnalysis/sourceCode/dayu/HADOOP_CONF_DIR/js/"
+HADOOP_CONF_PATH = '/search/odin/HADOOP_CONF_DIR/js/'
+UGI_URL = "http://svn.sogou-inc.com/svn/sogouime/DataAnalysis/sourceCode/dayu/ugi_config/js/"
+SPARK_CONF_PATH = '/search/odin/SPARK_CONF_DIR/js/'
+HIVE_CONF_PATH = '/search/odin/HIVE_CONF_DIR/js/'
+HIVE_CONF_URL = 'http://svn.sogou-inc.com/svn/sogouime/DataAnalysis/sourceCode/dayu/HIVE_CONF_DIR/js/'
+SPARK_CONF_ORIGIN = 'http://svn.sogou-inc.com/svn/sogouime/DataAnalysis/sourceCode/dayu/HIVE_CONF_DIR/js/'
+
+DEFAULT_IMAGE = '10.134.47.208:5000/huang:v17'
+EXTRA_HOSTS = {'sms.sogou':'10.148.15.149'}
+
+
+#pandora sso 认证地址
+SSO_AUTH = "https://login.sogou-inc.com/?appid=1668&sso_redirect=http%3a%2f%2fdayu.sogou%2fadmin%2fairflow%2flogin&targetUrl="
+SSO_AUTH_LOGOUT = "https://login.sogou-inc.com/logout.jsp?appid=1668&sso_redirect=http%3a%2f%2fdayu.sogou%2fadmin&targetUrl="
