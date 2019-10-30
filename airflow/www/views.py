@@ -85,6 +85,7 @@ from airflow.www import utils as wwwutils
 from airflow.www.forms import (DateTimeForm, DateTimeWithNumRunsForm,
                                DateTimeWithNumRunsWithDagRunsForm)
 from airflow.www.validators import GreaterEqualThan
+from airflow.configuration import  SSO_AUTH_LOGOUT
 
 QUERY_LIMIT = 100000
 CHART_LIMIT = 200000
@@ -97,14 +98,12 @@ login_required = airflow.login.login_required
 current_user = airflow.login.current_user
 logout_user = airflow.login.logout_user
 
-FILTER_BY_OWNER = False
-
+FILTER_BY_PRODUCT = conf.getboolean('webserver', 'filter_by_product')
 PAGE_SIZE = conf.getint('webserver', 'page_size')
 
-if conf.getboolean('webserver', 'FILTER_BY_OWNER'):
-    # filter_by_owner if authentication is enabled and filter_by_owner is true
-    FILTER_BY_OWNER = not current_app.config['LOGIN_DISABLED']
-
+if conf.getboolean('webserver', 'FILTER_BY_PRODUCT'):
+    # filter_by_product if authentication is enabled and filter_by_product is true
+    FILTER_BY_PRODUCT = not current_app.config['LOGIN_DISABLED']
 
 def dag_link(v, c, m, p):
     if m.dag_id is None:
@@ -753,8 +752,7 @@ class Airflow(AirflowViewMixin, BaseView):
     @expose('/logout')
     def logout(self):
         logout_user()
-        flash('You have been logged out.')
-        return redirect(url_for('admin.index'))
+        return redirect(SSO_AUTH_LOGOUT)
 
     @expose('/rendered')
     @login_required
@@ -2157,8 +2155,9 @@ class HomeView(AirflowViewMixin, AdminIndexView):
     def index(self, session=None):
         DM = models.DagModel
 
-        # restrict the dags shown if filter_by_owner and current user is not superuser
-        do_filter = FILTER_BY_OWNER and (not current_user.is_superuser())
+        # restrict the dags shown if filter_by_product and current user is not superuser
+        do_filter = FILTER_BY_PRODUCT and (not current_user.is_superuser())
+
         owner_mode = conf.get('webserver', 'OWNER_MODE').strip().lower()
 
         hide_paused_dags_by_default = conf.getboolean('webserver',
@@ -2196,7 +2195,8 @@ class HomeView(AirflowViewMixin, AdminIndexView):
         elif do_filter and owner_mode == 'user':
             query = query.filter(
                 ~DM.is_subdag, DM.is_active,
-                DM.owners == current_user.user.username
+                DM.products.in_([i.product for i in session.query(models.ProductOwner).filter(
+                    models.ProductOwner.owner == current_user.user.id).all()]) 
             )
         else:
             query = query.filter(
@@ -2347,6 +2347,27 @@ class ModelViewOnly(wwwutils.LoginMixin, AirflowModelView):
     can_delete = False
     column_display_pk = True
 
+    def get_query(self):
+
+        if not (FILTER_BY_PRODUCT and (not current_user.is_superuser())):
+            return self.session.query(self.model)
+
+        else:        
+            return self.session.query(self.model). \
+                join(models.DagModel, models.DagModel.dag_id == self.model.dag_id). \
+                join(models.ProductOwner,models.ProductOwner.product==models.DagModel.products). \
+                filter(models.ProductOwner.owner == current_user.user.id)
+
+    def get_count_query(self):
+        
+        if not (FILTER_BY_PRODUCT and (not current_user.is_superuser())):
+            return self.session.query(sqla.func.count('*')).select_from(self.model)
+        
+        else:
+            return self.session.query(sqla.func.count('*')).select_from(self.model). \
+                join(models.DagModel, models.DagModel.dag_id == self.model.dag_id). \
+                join(models.ProductOwner,models.ProductOwner.product==models.DagModel.products). \
+                filter(models.ProductOwner.owner == current_user.user.id)
 
 class PoolModelView(wwwutils.SuperUserMixin, AirflowModelView):
     column_list = ('pool', 'slots', 'used_slots', 'queued_slots')
