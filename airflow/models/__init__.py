@@ -38,4 +38,8 @@ from airflow.models.xcom import XCom, XCOM_RETURN_KEY  # noqa: F401
 # Classes that are remove in 2.0
 from airflow.models.knownevent import KnownEvent, KnownEventType  # noqa: F401
 from airflow.models.user import User  # noqa: F401
+from airflow.models.product import Product, ProductOwner  # noqa: F401
 from airflow.models.chart import Chart  # noqa: F401
+
+from airflow.jobs import BaseJob  
+

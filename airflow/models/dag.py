@@ -213,6 +213,7 @@ class DAG(BaseDag, LoggingMixin):
         self.user_defined_macros = user_defined_macros
         self.user_defined_filters = user_defined_filters
         self.default_args = copy.deepcopy(default_args or {})
+
         self.params = params or {}
 
         # merging potentially conflicting default_args['params'] into params
@@ -562,6 +563,10 @@ class DAG(BaseDag, LoggingMixin):
         :rtype: str
         """
         return ", ".join({t.owner for t in self.tasks})
+
+    @property
+    def product(self):
+        return None if 'product' not in self.default_args else self.default_args['product'] 
 
     @provide_session
     def _get_concurrency_reached(self, session=None):
@@ -1324,6 +1329,7 @@ class DAG(BaseDag, LoggingMixin):
         orm_dag.fileloc = self.parent_dag.fileloc if self.is_subdag else self.fileloc
         orm_dag.is_subdag = self.is_subdag
         orm_dag.owners = owner
+        orm_dag.products = self.product
         orm_dag.is_active = True
         orm_dag.last_scheduler_run = sync_time
         orm_dag.default_view = self._default_view
@@ -1486,6 +1492,8 @@ class DagModel(Base):
     fileloc = Column(String(2000))
     # String representing the owners
     owners = Column(String(2000))
+    # String representing the products
+    products = Column(String(2000))
     # Description of the dag
     description = Column(Text)
     # Default view of the inside the webserver
