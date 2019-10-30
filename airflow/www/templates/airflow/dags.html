@@ -50,7 +50,7 @@
                 <th width="12"><span id="pause_header" class="glyphicon glyphicon-info-sign" title="Use this toggle to pause a DAG. The scheduler won't schedule new tasks instances for a paused DAG. Tasks already running at pause time won't be affected."></span></th>
                 <th>DAG</th>
                 <th>Schedule</th>
-                <th>Owner</th>
+                <th>Product</th>
                 <th style="padding-left: 5px;">Recent Tasks
                   <span id="statuses_info" class="glyphicon glyphicon-info-sign" aria-hidden="true" title="Status of tasks from all active DAG runs or, if not currently active, from most recent run."></span>
                   <img id="loading" width="15" src="{{ url_for("static", filename="loading.gif") }}">
@@ -95,7 +95,7 @@
 
                 <!-- Column 5: Dag Owners -->
                 <td>
-                  {{ dag.owners }}
+                  {{ dag.products }}
                 </td>
 
                 <!-- Column 6: Recent Tasks -->
