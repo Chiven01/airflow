@@ -873,6 +873,7 @@ def webserver(args):
         app = cached_app_rbac(None) if settings.RBAC else cached_app(None)
         pid, stdout, stderr, log_file = setup_locations(
             "webserver", args.pid, args.stdout, args.stderr, args.log_file)
+
         os.environ.pop('SKIP_DAGS_PARSING')
         if args.daemon:
             handle = setup_logging(log_file)
@@ -1002,16 +1003,18 @@ def scheduler(args):
             stderr=stderr,
         )
         with ctx:
+            sp = subprocess.Popen(['airflow', 'sms_proxy'], close_fds=True)
             job.run()
-
+            sp.kill()
         stdout.close()
         stderr.close()
     else:
         signal.signal(signal.SIGINT, sigint_handler)
         signal.signal(signal.SIGTERM, sigint_handler)
         signal.signal(signal.SIGQUIT, sigquit_handler)
+        sp = subprocess.Popen(['airflow', 'sms_proxy'], close_fds=True)
         job.run()
-
+        sp.kill()
 
 @cli_utils.action_logging
 def serve_logs(args):
@@ -1030,6 +1033,31 @@ def serve_logs(args):
 
     worker_log_server_port = int(conf.get('celery', 'WORKER_LOG_SERVER_PORT'))
     flask_app.run(host='0.0.0.0', port=worker_log_server_port)
+
+
+@cli_utils.action_logging
+def sms_proxy(args):
+    from flask import Flask
+    from flask import request
+    import urllib
+    import sys
+    flask_app = Flask(__name__)
+    @flask_app.route('/portal/mobile/smsproxy.php', methods=['GET','POST'])
+    def sms_proxy():
+        number = request.args.to_dict().get('number')
+        desc = request.args.to_dict().get('desc')
+        appid = request.args.to_dict().get('appid')
+        url = "http://sms.sogou:80/portal/mobile/smsproxy.php?number="+number+"&desc="+urllib.parse.quote(str(desc))+"&appid="+appid+"&type=json"
+        req = urllib.request.Request(url)
+        res = urllib.request.urlopen(req)
+        print("number: " + number)
+        print("desc: " + desc)
+        print("appid: " + appid)
+        print(res.read())
+        return 'sent successful'
+    
+    sms_proxy_server_port = int(conf.get('webserver', 'SMS_PROXY_SERVER_PORT'))
+    flask_app.run(host='0.0.0.0', port=sms_proxy_server_port)
 
 
 @cli_utils.action_logging
@@ -2045,6 +2073,10 @@ class CLIFactory(object):
             'args': ('dag_id', 'task_id', 'execution_date', 'subdir'),
         }, {
             'func': serve_logs,
+            'help': "Serve logs generate by worker",
+            'args': tuple(),
+        }, {
+            'func': sms_proxy,
             'help': "Serve logs generate by worker",
             'args': tuple(),
         }, {
