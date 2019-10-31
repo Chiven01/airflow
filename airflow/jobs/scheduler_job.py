@@ -1344,7 +1344,9 @@ class SchedulerJob(BaseJob):
                                                      self.num_runs,
                                                      processor_factory,
                                                      processor_timeout,
-                                                     async_mode)
+                                                     async_mode,
+                                                     pickle_dags,
+                                                     self.dag_ids)
 
         try:
             self._execute_helper()

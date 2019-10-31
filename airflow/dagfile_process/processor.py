@@ -2,12 +2,14 @@
 
 import os
 import pika
-import json
+import pickle
 
 from celery import Celery
 from airflow import configuration as conf
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow import jobs, settings
+from airflow.utils.timeout import timeout
+from airflow.exceptions import AirflowTaskTimeout
 
 section = "dagfileprocessor_celery"
 broker_url = conf.get(section, 'BROKER_URL')
@@ -54,8 +56,29 @@ def productor(body):
                           body=body)
     conn.close()
 
+
+def consumer():
+    results = []
+    conn = get_connection()
+    channel = conn.channel()
+    channel.queue_declare(queue=QUEUE)
+
+    def callback(ch, method, properties, body):
+        results.append(body)
+
+    channel.basic_consume(QUEUE,
+                          callback,
+                          auto_ack=True)
+    with timeout(seconds=1):
+        try:
+            channel.start_consuming()
+        except AirflowTaskTimeout as e:
+            print("Spend 1 seconds receiving %d simpledag_str" % len(results))
+    conn.close()
+    return results
+
 @app.task
-def file_processor(do_pickle, dag_ids, dag_contents):
+def file_processor(do_pickle, dag_ids, file_tag, dag_contents):
     log = LoggingMixin().log
 
     if dag_contents and isinstance(dag_contents, dict):
@@ -74,13 +97,15 @@ def file_processor(do_pickle, dag_ids, dag_contents):
 
     settings.configure_orm()
     scheduler_job = jobs.SchedulerJob(dag_ids=dag_ids, log=log)
-    results = scheduler_job.process_file(file_path, do_pickle)
+    simple_dags = scheduler_job.process_file(file_path, do_pickle)
     log.info("File %s's processing has finished , send back simpledags now.", file_path)
 
+    results = {}
+    results[file_tag] = simple_dags
+
     try:
-        for result in results:
-            body = json.dumps(result.__dict__)
-            productor(body)
+        body = pickle.dumps(results)
+        productor(body)
         log.debug("Successed when send samepledags to rabbitmq.")
     except:
         log.debug("Failed when send samepledags to rabbitmq.")

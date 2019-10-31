@@ -24,12 +24,18 @@ from __future__ import unicode_literals
 
 import logging
 import multiprocessing
+from multiprocessing import Pool, cpu_count
 import os
 import re
 import signal
 import sys
 import time
 import zipfile
+import math
+import traceback
+import pickle
+from celery import Celery
+from celery import states as celery_states
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
 from collections import namedtuple
@@ -54,6 +60,10 @@ from airflow.utils import timezone
 from airflow.utils.helpers import reap_process_group
 from airflow.utils.db import provide_session
 from airflow.utils.log.logging_mixin import LoggingMixin
+from airflow import configuration
+from airflow.utils.timeout import timeout
+from airflow.executors.celery_executor import ExceptionWithTraceback
+from airflow.dagfile_process.processor import consumer
 
 if six.PY2:
     ConnectionError = IOError
@@ -143,6 +153,9 @@ class SimpleDag(BaseDag):
             return self._task_special_args[task_id][special_arg_name]
         else:
             return None
+
+    def set_task_ids(self, task_ids):
+        self._task_ids = task_ids
 
 
 class SimpleTaskInstance(object):
@@ -481,7 +494,9 @@ class DagFileProcessorAgent(LoggingMixin):
                  max_runs,
                  processor_factory,
                  processor_timeout,
-                 async_mode):
+                 async_mode,
+                 pickle_dags,
+                 dag_ids):
         """
         :param dag_directory: Directory where DAG definitions are kept. All
             files in file_paths should be under this directory
@@ -506,6 +521,8 @@ class DagFileProcessorAgent(LoggingMixin):
         self._processor_factory = processor_factory
         self._processor_timeout = processor_timeout
         self._async_mode = async_mode
+        self._pickle_dags = pickle_dags
+        self._dag_ids = dag_ids
         # Map from file path to the processor
         self._processors = {}
         # Map from file path to the last runtime
@@ -538,6 +555,8 @@ class DagFileProcessorAgent(LoggingMixin):
                 self._processor_timeout,
                 child_signal_conn,
                 self._async_mode,
+                self._pickle_dags,
+                self._dag_ids,
             )
         )
         self._process.start()
@@ -582,7 +601,9 @@ class DagFileProcessorAgent(LoggingMixin):
                                processor_factory,
                                processor_timeout,
                                signal_conn,
-                               async_mode):
+                               async_mode,
+                               pickle_dags,
+                               dag_ids):
 
         # Make this process start as a new process group - that makes it easy
         # to kill all sub-process of this at the OS-level, rather than having
@@ -608,7 +629,9 @@ class DagFileProcessorAgent(LoggingMixin):
                                                     processor_factory,
                                                     processor_timeout,
                                                     signal_conn,
-                                                    async_mode)
+                                                    async_mode,
+                                                    pickle_dags,
+                                                    dag_ids)
 
         processor_manager.start()
 
@@ -715,7 +738,9 @@ class DagFileProcessorManager(LoggingMixin):
                  processor_factory,
                  processor_timeout,
                  signal_conn,
-                 async_mode=True):
+                 pickle_dags,
+                 dag_ids,
+                 async_mode=True,):
         """
         :param dag_directory: Directory where DAG definitions are kept. All
             files in file_paths should be under this directory
@@ -737,11 +762,19 @@ class DagFileProcessorManager(LoggingMixin):
         """
         self._file_paths = file_paths
         self._file_path_queue = []
+        self._task_args = {}
         self._dag_directory = dag_directory
         self._max_runs = max_runs
         self._processor_factory = processor_factory
         self._signal_conn = signal_conn
         self._async_mode = async_mode
+
+        self._pickle_dags = pickle_dags
+        self._dag_ids = dag_ids
+
+        self._sync_parallelism = configuration.getint('dagfileprocessor_celery', 'SYNC_PARALLELISM')
+        if self._sync_parallelism == 0:
+            self._sync_parallelism = max(1, cpu_count() - 1)
 
         self._parallelism = conf.getint('scheduler', 'max_threads')
         if 'sqlite' in conf.get('core', 'sql_alchemy_conn') and self._parallelism > 1:
@@ -758,6 +791,8 @@ class DagFileProcessorManager(LoggingMixin):
                                                 'print_stats_interval')
         # Map from file path to the processor
         self._processors = {}
+        # Map from file path to the start runtime
+        self._start_time = {}
         # Map from file path to the last runtime
         self._last_runtime = {}
         # Map from file path to the last finish time
@@ -841,7 +876,8 @@ class DagFileProcessorManager(LoggingMixin):
 
             self._refresh_dag_dir()
 
-            simple_dags = self.heartbeat()
+            # simple_dags = self.heartbeat()
+            simple_dags = self.heartbeat_celery()
             for simple_dag in simple_dags:
                 self._signal_conn.send(simple_dag)
 
@@ -1082,6 +1118,15 @@ class DagFileProcessorManager(LoggingMixin):
         :return: None
         """
         self._file_paths = new_file_paths
+        self._task_args.clear()
+
+        from airflow.dagfile_process.processor import file_processor
+        for file_path in self._file_paths:
+            if not zipfile.is_zipfile(file_path):
+                with open(file_path, 'r', encoding='utf8') as f:
+                    file_content = f.readlines()
+                self._task_args[file_path] = [self._pickle_dags, self._dag_ids, file_content, file_path, file_processor]
+
         self._file_path_queue = [x for x in self._file_path_queue
                                  if x in new_file_paths]
         # Stop processors that are working on deleted files
@@ -1147,6 +1192,30 @@ class DagFileProcessorManager(LoggingMixin):
             else:
                 for simple_dag in processor.result:
                     simple_dags.append(simple_dag)
+
+        return simple_dags
+
+    def collect_results_celery(self):
+        simple_dags = []
+        results = consumer()
+        for result in results:
+            res_dict = pickle.loads(result)
+            for file_path, dags in res_dict.items():
+                for simple_dag in dags:
+
+                    simple_dags.append(simple_dag)
+
+                    now = timezone.utcnow()
+                    self._last_finish_time[file_path] = now
+                    runtime = now - self._start_time[file_path]
+                    self._last_runtime[file_path] = runtime
+                    self._processors.pop(file_path)
+                    self.log.debug("Receive simpledag %s got from dag file %s, and spent %d seconds",
+                                   file_path, simple_dag.dag_id, runtime)
+
+                    self._run_count[file_path] += 1
+
+        #todo(chiven): kill timeout tasks, and clear up relevant data
 
         return simple_dags
 
@@ -1216,6 +1285,114 @@ class DagFileProcessorManager(LoggingMixin):
         self._run_count[self._heart_beat_key] += 1
 
         return simple_dags
+
+    def heartbeat_celery(self):
+        """
+        This should be periodically called by the manager loop. This method will
+        kick off new processes to process DAG definition files and read the
+        results from the finished processors.
+
+        :return: a list of SimpleDags that were produced by processors that
+            have finished since the last time this was called
+        :rtype: list[airflow.utils.dag_processing.SimpleDag]
+        """
+        simple_dags = self.collect_results_celery()
+
+        # Generate more file paths to process if we processed all the files
+        # already.
+        if len(self._file_path_queue) == 0:
+            now = timezone.utcnow()
+            file_paths_recently_processed = []
+            for file_path in self._file_paths:
+                last_finish_time = self.get_last_finish_time(file_path)
+                if (last_finish_time is not None and
+                    (now - last_finish_time).total_seconds() <
+                        self._file_process_interval):
+                    file_paths_recently_processed.append(file_path)
+
+            files_paths_at_run_limit = [file_path
+                                        for file_path, num_runs in self._run_count.items()
+                                        if num_runs == self._max_runs]
+
+            files_paths_to_queue = list(set(self._file_paths) -
+                                        set(file_paths_recently_processed) -
+                                        set(files_paths_at_run_limit))
+
+            if len(self._processors) > 0:
+                self.log.debug(
+                    "%d file paths are still being processed", len(self._processors))
+
+            self.log.debug(
+                "Queuing the following files for processing:\n\t%s",
+                "\n\t".join(files_paths_to_queue)
+            )
+
+            self._file_path_queue.extend(files_paths_to_queue)
+
+
+        open_slots = self._parallelism - len(self._processors)
+        if open_slots > 0 and len(self._file_path_queue) > 0:
+
+            task_tuples_to_send = []
+            for i in range(min(open_slots, len(self._file_path_queue))):
+                file_path = self._file_path_queue[i]
+                if file_path in self._task_args:
+                    task_tuples_to_send.append(self._task_args.get(file_path))
+
+            cache_result_backend = None
+            if task_tuples_to_send:
+                tasks = [t[4] for t in task_tuples_to_send]
+                cache_result_backend = tasks[0]
+
+                chunksize = self._num_tasks_per_send_process(len(task_tuples_to_send))
+                num_processor = min(len(task_tuples_to_send), self._sync_parallelism)
+                send_pool = Pool(processor=num_processor)
+
+                key_and_async_results = send_pool.map(
+                    self.send_processor,
+                    task_tuples_to_send,
+                    chunksize=chunksize)
+
+                send_pool.close()
+                send_pool.join()
+                self.log.debug('Sent all dagfile tasks.')
+
+                for file_path, result in key_and_async_results:
+                    if isinstance(result, ExceptionWithTraceback):
+                        self.log.error("Error sending Celery tasks:%s\n%s\n", result.exception, result.traceback)
+                    elif result is not None:
+                        self._file_path_queue.remove(file_path)
+                        self._processors[file_path] = result
+                        now = timezone.utcnow()
+                        self._start_time[file_path] = now
+
+        # Update heartbeat count.
+        self._run_count[self._heart_beat_key] += 1
+        return simple_dags
+
+    def _num_tasks_per_send_process(self, to_send_count):
+        """
+        How many Celery tasks should each worker process send.
+
+        :return: Number of tasks that should be sent per process
+        :rtype: int
+        """
+        return max(1,
+                   int(math.ceil(1.0 * to_send_count / self._sync_parallelism)))
+
+    def send_processor(processor_tuple):
+        pickle_dags, dag_ids, file_content, file_path, task = processor_tuple
+        try:
+            with timeout(seconds=2):
+                result = task.apply_async(args=[pickle_dags, dag_ids, file_path, file_content],
+                                          queue=conf.get('dagfileprocessor_celery', 'default_queue'))
+        except Exception as e:
+            exception_traceback = "Celery Task ID: {}\n{}".format(file_path,
+                                                                  traceback.format_exc())
+            result = ExceptionWithTraceback(e, exception_traceback)
+
+        return file_path, result
+
 
     def _kill_timed_out_processors(self):
         """
