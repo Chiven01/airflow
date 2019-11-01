@@ -62,7 +62,6 @@ from airflow.utils.db import provide_session
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow import configuration
 from airflow.utils.timeout import timeout
-from airflow.executors.celery_executor import ExceptionWithTraceback
 from airflow.dagfile_process.processor import consumer
 
 if six.PY2:
@@ -293,6 +292,11 @@ class SimpleDagBag(BaseDagBag):
             raise AirflowException("Unknown DAG ID {}".format(dag_id))
         return self.dag_id_to_simple_dag[dag_id]
 
+class ExceptionWithTraceback(object):
+
+    def __init__(self, exception, exception_traceback):
+        self.exception = exception
+        self.traceback = exception_traceback
 
 def correct_maybe_zipped(fileloc):
     """
