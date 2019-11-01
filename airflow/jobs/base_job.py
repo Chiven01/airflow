@@ -189,8 +189,8 @@ class BaseJob(Base, LoggingMixin):
             # Update last heartbeat time
             with create_session() as session:
                 job = session.query(BaseJob).filter(BaseJob.id == self.id).first()
-                #job.latest_heartbeat = timezone.utcnow()
-                job.latest_heartbeat = latest_heartbeat
+                job.latest_heartbeat = timezone.utcnow()
+                self.latest_heartbeat = job.latest_heartbeat
                 session.merge(job)
                 session.commit()
 
