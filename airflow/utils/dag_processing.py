@@ -363,6 +363,10 @@ def list_py_file_paths(directory, safe_mode=conf.getboolean('core', 'DAG_DISCOVE
                     file_path = os.path.join(root, f)
                     if not os.path.isfile(file_path):
                         continue
+                    # todo(chiven): change DagfileManager from multiprocessing to distributed way, still can't support compressed files.
+                    # Support will be added in the future.
+                    if zipfile.is_zipfile(file_path):
+                        continue
                     mod_name, file_ext = os.path.splitext(
                         os.path.split(file_path)[-1])
                     if file_ext != '.py' and not zipfile.is_zipfile(file_path):
@@ -1197,6 +1201,7 @@ class DagFileProcessorManager(LoggingMixin):
 
     def collect_results_celery(self):
         simple_dags = []
+        # Consume simpledags from worker, which parse dagfiles.
         results = consumer()
         for result in results:
             res_dict = pickle.loads(result)
@@ -1332,12 +1337,16 @@ class DagFileProcessorManager(LoggingMixin):
 
         open_slots = self._parallelism - len(self._processors)
         if open_slots > 0 and len(self._file_path_queue) > 0:
+            self.log.info("There are %d open_slot that can parse dagfiles", open_slots)
 
             task_tuples_to_send = []
             for i in range(min(open_slots, len(self._file_path_queue))):
                 file_path = self._file_path_queue[i]
                 if file_path in self._task_args:
+                    self.log.debug("Add file %s , which will be sent to dagfileprocessor worker.", file_path)
                     task_tuples_to_send.append(self._task_args.get(file_path))
+                else:
+                    self.log.warning("File %s not exist in _task_args, this shouldn't happend.", file_path)
 
             cache_result_backend = None
             if task_tuples_to_send:
@@ -1359,9 +1368,11 @@ class DagFileProcessorManager(LoggingMixin):
 
                 for file_path, result in key_and_async_results:
                     if isinstance(result, ExceptionWithTraceback):
-                        self.log.error("Error sending Celery tasks:%s\n%s\n", result.exception, result.traceback)
+                        self.log.error("File %s, error sending Celery tasks:%s\n%s\n", file_path, result.exception, result.traceback)
                     elif result is not None:
+                        self.log.debug("File %s, success sending Celery tasks", file_path)
                         self._file_path_queue.remove(file_path)
+                        result.backend = cache_result_backend
                         self._processors[file_path] = result
                         now = timezone.utcnow()
                         self._start_time[file_path] = now
@@ -1380,7 +1391,7 @@ class DagFileProcessorManager(LoggingMixin):
         return max(1,
                    int(math.ceil(1.0 * to_send_count / self._sync_parallelism)))
 
-    def send_processor(processor_tuple):
+    def send_processor(self, processor_tuple):
         pickle_dags, dag_ids, file_content, file_path, task = processor_tuple
         try:
             with timeout(seconds=2):

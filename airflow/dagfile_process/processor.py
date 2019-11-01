@@ -11,24 +11,6 @@ from airflow import jobs, settings
 from airflow.utils.timeout import timeout
 from airflow.exceptions import AirflowTaskTimeout
 
-section = "dagfileprocessor_celery"
-broker_url = conf.get(section, 'BROKER_URL')
-broker_transport_options = conf.getsection('celery_broker_transport_options')
-celery_config = {
-    'accept_content': ['json', 'pickle'],
-    'event_serializer': 'json',
-    'worker_prefetch_multiplier': 1,
-    'task_acks_late': True,
-    'task_default_queue': conf.get(section, 'DEFAULT_QUEUE'),
-    'task_default_exchange': conf.get(section, 'DEFAULT_QUEUE'),
-    'broker_url': broker_url,
-    'broker_transport_options': broker_transport_options,
-    'result_backend': conf.get(section, 'RESULT_BACKEND'),
-    'worker_concurrency': conf.getint(section, 'WORKER_CONCURRENCY'),
-    'result_expires': conf.getint(section, 'RESULT_EXPIRES'),
-}
-app = Celery(
-    conf.get(section, 'CELERY_APP_NAME'), config_source=celery_config)
 
 
 QUEUE = 'python_conn_test'
@@ -76,6 +58,25 @@ def consumer():
             print("Spend 1 seconds receiving %d simpledag_str" % len(results))
     conn.close()
     return results
+
+section = "dagfileprocessor_celery"
+broker_url = conf.get(section, 'BROKER_URL')
+broker_transport_options = conf.getsection('celery_broker_transport_options')
+celery_config = {
+    'accept_content': ['json', 'pickle'],
+    'event_serializer': 'json',
+    'worker_prefetch_multiplier': 1,
+    'task_acks_late': True,
+    'task_default_queue': conf.get(section, 'DEFAULT_QUEUE'),
+    'task_default_exchange': conf.get(section, 'DEFAULT_QUEUE'),
+    'broker_url': broker_url,
+    'broker_transport_options': broker_transport_options,
+    'result_backend': conf.get(section, 'RESULT_BACKEND'),
+    'worker_concurrency': conf.getint(section, 'WORKER_CONCURRENCY'),
+    'result_expires': conf.getint(section, 'RESULT_EXPIRES'),
+}
+app = Celery(
+    conf.get(section, 'CELERY_APP_NAME'), config_source=celery_config)
 
 @app.task
 def file_processor(do_pickle, dag_ids, file_tag, dag_contents):
