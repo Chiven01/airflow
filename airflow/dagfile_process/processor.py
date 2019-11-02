@@ -7,7 +7,6 @@ import pickle
 from celery import Celery
 from airflow import configuration as conf
 from airflow.utils.log.logging_mixin import LoggingMixin
-from airflow import jobs, settings
 from airflow.utils.timeout import timeout
 from airflow.exceptions import AirflowTaskTimeout
 
@@ -96,6 +95,7 @@ def file_processor(do_pickle, dag_ids, file_tag, dag_contents):
         log.error("args.dag_contents is not dict")
         return
 
+    from airflow import jobs, settings
     settings.configure_orm()
     scheduler_job = jobs.SchedulerJob(dag_ids=dag_ids, log=log)
     simple_dags = scheduler_job.process_file(file_path, do_pickle)

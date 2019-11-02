@@ -298,6 +298,19 @@ class ExceptionWithTraceback(object):
         self.exception = exception
         self.traceback = exception_traceback
 
+def send_processor(processor_tuple):
+    pickle_dags, dag_ids, file_content, file_path, task = processor_tuple
+    try:
+        with timeout(seconds=2):
+            result = task.apply_async(args=[pickle_dags, dag_ids, file_path, file_content],
+                                      queue=conf.get('dagfileprocessor_celery', 'default_queue'))
+    except Exception as e:
+        exception_traceback = "Celery Task ID: {}\n{}".format(file_path,
+                                                              traceback.format_exc())
+        result = ExceptionWithTraceback(e, exception_traceback)
+
+    return file_path, result
+
 def correct_maybe_zipped(fileloc):
     """
     If the path contains a folder with a .zip suffix, then
@@ -637,9 +650,9 @@ class DagFileProcessorAgent(LoggingMixin):
                                                     processor_factory,
                                                     processor_timeout,
                                                     signal_conn,
-                                                    async_mode,
                                                     pickle_dags,
-                                                    dag_ids)
+                                                    dag_ids,
+                                                    async_mode)
 
         processor_manager.start()
 
@@ -770,7 +783,6 @@ class DagFileProcessorManager(LoggingMixin):
         """
         self._file_paths = file_paths
         self._file_path_queue = []
-        self._task_args = {}
         self._dag_directory = dag_directory
         self._max_runs = max_runs
         self._processor_factory = processor_factory
@@ -779,6 +791,10 @@ class DagFileProcessorManager(LoggingMixin):
 
         self._pickle_dags = pickle_dags
         self._dag_ids = dag_ids
+
+        self._task_args = {}
+        if len(self._file_paths) > 0:
+            self._set_file_contents(self._file_paths)
 
         self._sync_parallelism = configuration.getint('dagfileprocessor_celery', 'SYNC_PARALLELISM')
         if self._sync_parallelism == 0:
@@ -1062,7 +1078,9 @@ class DagFileProcessorManager(LoggingMixin):
         :rtype: int
         """
         if file_path in self._processors:
-            return self._processors[file_path].pid
+            # return self._processors[file_path].pid
+            # AsyncResult instance's id
+            return self._processors[file_path].id
         return None
 
     def get_all_pids(self):
@@ -1081,7 +1099,7 @@ class DagFileProcessorManager(LoggingMixin):
             being processed
         """
         if file_path in self._processors:
-            return (timezone.utcnow() - self._processors[file_path].start_time)\
+            return (timezone.utcnow() - self._start_time.get(file_path, timezone.utcnow()))\
                 .total_seconds()
         return None
 
@@ -1114,7 +1132,8 @@ class DagFileProcessorManager(LoggingMixin):
         :rtype: datetime
         """
         if file_path in self._processors:
-            return self._processors[file_path].start_time
+            # return self._processors[file_path].start_time
+            return self._start_time.get(file_path, timezone.utcnow())
         return None
 
     def set_file_paths(self, new_file_paths):
@@ -1128,85 +1147,96 @@ class DagFileProcessorManager(LoggingMixin):
         self._file_paths = new_file_paths
         self._task_args.clear()
 
+        self._set_file_contents(self._file_paths)
+
+        self._file_path_queue = [x for x in self._file_path_queue
+                                 if x in new_file_paths]
+        # Stop processors that are working on deleted files
+        # filtered_processors = {}
+        # for file_path, processor in self._processors.items():
+        #     if file_path in new_file_paths:
+        #         filtered_processors[file_path] = processor
+        #     else:
+        #         self.log.warning("Stopping processor for %s", file_path)
+        #         processor.terminate()
+        # self._processors = filtered_processors
+
+    def _set_file_contents(self, file_paths):
+        if len(file_paths) == 0:
+            self.log.debug("No file path is needed to process.")
+            self._task_args.clear()
+            return
+
         from airflow.dagfile_process.processor import file_processor
-        for file_path in self._file_paths:
+        for file_path in file_paths:
             if not zipfile.is_zipfile(file_path):
                 with open(file_path, 'r', encoding='utf8') as f:
                     file_content = f.readlines()
                 self._task_args[file_path] = [self._pickle_dags, self._dag_ids, file_content, file_path, file_processor]
 
-        self._file_path_queue = [x for x in self._file_path_queue
-                                 if x in new_file_paths]
-        # Stop processors that are working on deleted files
-        filtered_processors = {}
-        for file_path, processor in self._processors.items():
-            if file_path in new_file_paths:
-                filtered_processors[file_path] = processor
-            else:
-                self.log.warning("Stopping processor for %s", file_path)
-                processor.terminate()
-        self._processors = filtered_processors
-
     def wait_until_finished(self):
         """
+        Only for sync mode.
         Sleeps until all the processors are done.
         """
-        for file_path, processor in self._processors.items():
-            while not processor.done:
-                time.sleep(0.1)
+        # for file_path, processor in self._processors.items():
+        #     while not processor.done:
+        #         time.sleep(0.1)
+        return
 
-    def collect_results(self):
-        """
-        Collect the result from any finished DAG processors
-
-        :return: a list of SimpleDags that were produced by processors that
-            have finished since the last time this was called
-        :rtype: list[airflow.utils.dag_processing.SimpleDag]
-        """
-        self._kill_timed_out_processors()
-
-        finished_processors = {}
-        """:type : dict[unicode, AbstractDagFileProcessor]"""
-        running_processors = {}
-        """:type : dict[unicode, AbstractDagFileProcessor]"""
-
-        for file_path, processor in self._processors.items():
-            if processor.done:
-                self.log.debug("Processor for %s finished", file_path)
-                now = timezone.utcnow()
-                finished_processors[file_path] = processor
-                self._last_runtime[file_path] = (now -
-                                                 processor.start_time).total_seconds()
-                self._last_finish_time[file_path] = now
-                self._run_count[file_path] += 1
-            else:
-                running_processors[file_path] = processor
-        self._processors = running_processors
-
-        self.log.debug("%s/%s DAG parsing processes running",
-                       len(self._processors), self._parallelism)
-
-        self.log.debug("%s file paths queued for processing",
-                       len(self._file_path_queue))
-
-        # Collect all the DAGs that were found in the processed files
-        simple_dags = []
-        for file_path, processor in finished_processors.items():
-            if processor.result is None:
-                self.log.warning(
-                    "Processor for %s exited with return code %s.",
-                    processor.file_path, processor.exit_code
-                )
-            else:
-                for simple_dag in processor.result:
-                    simple_dags.append(simple_dag)
-
-        return simple_dags
+    # def collect_results(self):
+    #     """
+    #     Collect the result from any finished DAG processors
+    #
+    #     :return: a list of SimpleDags that were produced by processors that
+    #         have finished since the last time this was called
+    #     :rtype: list[airflow.utils.dag_processing.SimpleDag]
+    #     """
+    #     self._kill_timed_out_processors()
+    #
+    #     finished_processors = {}
+    #     """:type : dict[unicode, AbstractDagFileProcessor]"""
+    #     running_processors = {}
+    #     """:type : dict[unicode, AbstractDagFileProcessor]"""
+    #
+    #     for file_path, processor in self._processors.items():
+    #         if processor.done:
+    #             self.log.debug("Processor for %s finished", file_path)
+    #             now = timezone.utcnow()
+    #             finished_processors[file_path] = processor
+    #             self._last_runtime[file_path] = (now -
+    #                                              processor.start_time).total_seconds()
+    #             self._last_finish_time[file_path] = now
+    #             self._run_count[file_path] += 1
+    #         else:
+    #             running_processors[file_path] = processor
+    #     self._processors = running_processors
+    #
+    #     self.log.debug("%s/%s DAG parsing processes running",
+    #                    len(self._processors), self._parallelism)
+    #
+    #     self.log.debug("%s file paths queued for processing",
+    #                    len(self._file_path_queue))
+    #
+    #     # Collect all the DAGs that were found in the processed files
+    #     simple_dags = []
+    #     for file_path, processor in finished_processors.items():
+    #         if processor.result is None:
+    #             self.log.warning(
+    #                 "Processor for %s exited with return code %s.",
+    #                 processor.file_path, processor.exit_code
+    #             )
+    #         else:
+    #             for simple_dag in processor.result:
+    #                 simple_dags.append(simple_dag)
+    #
+    #     return simple_dags
 
     def collect_results_celery(self):
         simple_dags = []
         # Consume simpledags from worker, which parse dagfiles.
         results = consumer()
+        self.log.debug("Receive results from %d celery dagprocessors.", len(results))
         for result in results:
             res_dict = pickle.loads(result)
             for file_path, dags in res_dict.items():
@@ -1216,7 +1246,7 @@ class DagFileProcessorManager(LoggingMixin):
 
                     now = timezone.utcnow()
                     self._last_finish_time[file_path] = now
-                    runtime = now - self._start_time[file_path]
+                    runtime = now - self._start_time.get(file_path, now)
                     self._last_runtime[file_path] = runtime
                     self._processors.pop(file_path)
                     self.log.debug("Receive simpledag %s got from dag file %s, and spent %d seconds",
@@ -1228,72 +1258,72 @@ class DagFileProcessorManager(LoggingMixin):
 
         return simple_dags
 
-    def heartbeat(self):
-        """
-        This should be periodically called by the manager loop. This method will
-        kick off new processes to process DAG definition files and read the
-        results from the finished processors.
-
-        :return: a list of SimpleDags that were produced by processors that
-            have finished since the last time this was called
-        :rtype: list[airflow.utils.dag_processing.SimpleDag]
-        """
-        simple_dags = self.collect_results()
-
-        # Generate more file paths to process if we processed all the files
-        # already.
-        if len(self._file_path_queue) == 0:
-            # If the file path is already being processed, or if a file was
-            # processed recently, wait until the next batch
-            file_paths_in_progress = self._processors.keys()
-            now = timezone.utcnow()
-            file_paths_recently_processed = []
-            for file_path in self._file_paths:
-                last_finish_time = self.get_last_finish_time(file_path)
-                if (last_finish_time is not None and
-                    (now - last_finish_time).total_seconds() <
-                        self._file_process_interval):
-                    file_paths_recently_processed.append(file_path)
-
-            files_paths_at_run_limit = [file_path
-                                        for file_path, num_runs in self._run_count.items()
-                                        if num_runs == self._max_runs]
-
-            files_paths_to_queue = list(set(self._file_paths) -
-                                        set(file_paths_in_progress) -
-                                        set(file_paths_recently_processed) -
-                                        set(files_paths_at_run_limit))
-
-            for file_path, processor in self._processors.items():
-                self.log.debug(
-                    "File path %s is still being processed (started: %s)",
-                    processor.file_path, processor.start_time.isoformat()
-                )
-
-            self.log.debug(
-                "Queuing the following files for processing:\n\t%s",
-                "\n\t".join(files_paths_to_queue)
-            )
-
-            self._file_path_queue.extend(files_paths_to_queue)
-
-        # Start more processors if we have enough slots and files to process
-        while (self._parallelism - len(self._processors) > 0 and
-               len(self._file_path_queue) > 0):
-            file_path = self._file_path_queue.pop(0)
-            processor = self._processor_factory(file_path)
-
-            processor.start()
-            self.log.debug(
-                "Started a process (PID: %s) to generate tasks for %s",
-                processor.pid, file_path
-            )
-            self._processors[file_path] = processor
-
-        # Update heartbeat count.
-        self._run_count[self._heart_beat_key] += 1
-
-        return simple_dags
+    # def heartbeat(self):
+    #     """
+    #     This should be periodically called by the manager loop. This method will
+    #     kick off new processes to process DAG definition files and read the
+    #     results from the finished processors.
+    #
+    #     :return: a list of SimpleDags that were produced by processors that
+    #         have finished since the last time this was called
+    #     :rtype: list[airflow.utils.dag_processing.SimpleDag]
+    #     """
+    #     simple_dags = self.collect_results()
+    #
+    #     # Generate more file paths to process if we processed all the files
+    #     # already.
+    #     if len(self._file_path_queue) == 0:
+    #         # If the file path is already being processed, or if a file was
+    #         # processed recently, wait until the next batch
+    #         file_paths_in_progress = self._processors.keys()
+    #         now = timezone.utcnow()
+    #         file_paths_recently_processed = []
+    #         for file_path in self._file_paths:
+    #             last_finish_time = self.get_last_finish_time(file_path)
+    #             if (last_finish_time is not None and
+    #                 (now - last_finish_time).total_seconds() <
+    #                     self._file_process_interval):
+    #                 file_paths_recently_processed.append(file_path)
+    #
+    #         files_paths_at_run_limit = [file_path
+    #                                     for file_path, num_runs in self._run_count.items()
+    #                                     if num_runs == self._max_runs]
+    #
+    #         files_paths_to_queue = list(set(self._file_paths) -
+    #                                     set(file_paths_in_progress) -
+    #                                     set(file_paths_recently_processed) -
+    #                                     set(files_paths_at_run_limit))
+    #
+    #         for file_path, processor in self._processors.items():
+    #             self.log.debug(
+    #                 "File path %s is still being processed (started: %s)",
+    #                 processor.file_path, processor.start_time.isoformat()
+    #             )
+    #
+    #         self.log.debug(
+    #             "Queuing the following files for processing:\n\t%s",
+    #             "\n\t".join(files_paths_to_queue)
+    #         )
+    #
+    #         self._file_path_queue.extend(files_paths_to_queue)
+    #
+    #     # Start more processors if we have enough slots and files to process
+    #     while (self._parallelism - len(self._processors) > 0 and
+    #            len(self._file_path_queue) > 0):
+    #         file_path = self._file_path_queue.pop(0)
+    #         processor = self._processor_factory(file_path)
+    #
+    #         processor.start()
+    #         self.log.debug(
+    #             "Started a process (PID: %s) to generate tasks for %s",
+    #             processor.pid, file_path
+    #         )
+    #         self._processors[file_path] = processor
+    #
+    #     # Update heartbeat count.
+    #     self._run_count[self._heart_beat_key] += 1
+    #
+    #     return simple_dags
 
     def heartbeat_celery(self):
         """
@@ -1359,10 +1389,10 @@ class DagFileProcessorManager(LoggingMixin):
 
                 chunksize = self._num_tasks_per_send_process(len(task_tuples_to_send))
                 num_processor = min(len(task_tuples_to_send), self._sync_parallelism)
-                send_pool = Pool(processor=num_processor)
+                send_pool = Pool(processes=num_processor)
 
                 key_and_async_results = send_pool.map(
-                    self.send_processor,
+                    send_processor,
                     task_tuples_to_send,
                     chunksize=chunksize)
 
@@ -1394,20 +1424,6 @@ class DagFileProcessorManager(LoggingMixin):
         """
         return max(1,
                    int(math.ceil(1.0 * to_send_count / self._sync_parallelism)))
-
-    def send_processor(self, processor_tuple):
-        pickle_dags, dag_ids, file_content, file_path, task = processor_tuple
-        try:
-            with timeout(seconds=2):
-                result = task.apply_async(args=[pickle_dags, dag_ids, file_path, file_content],
-                                          queue=conf.get('dagfileprocessor_celery', 'default_queue'))
-        except Exception as e:
-            exception_traceback = "Celery Task ID: {}\n{}".format(file_path,
-                                                                  traceback.format_exc())
-            result = ExceptionWithTraceback(e, exception_traceback)
-
-        return file_path, result
-
 
     def _kill_timed_out_processors(self):
         """
@@ -1442,13 +1458,18 @@ class DagFileProcessorManager(LoggingMixin):
         Stops all running processors
         :return: None
         """
-        for processor in self._processors.values():
-            processor.terminate()
+        self.log.debug("Manager change to celery module, so method end need to be overwrote.")
+        # manager change to celery module, so multiesprocess don't work
+        # for processor in self._processors.values():
+        #     processor.terminate()
 
     def end(self):
         """
         Kill all child processes on exit since we don't want to leave
         them as orphaned.
+        """
+        self.log.debug("Manager change to celery module, so method end need to be overwrote.")
+        # manager change to celery module, so multiesprocess don't work
         """
         pids_to_kill = self.get_all_pids()
         if len(pids_to_kill) > 0:
@@ -1481,3 +1502,4 @@ class DagFileProcessorManager(LoggingMixin):
                     self.log.info("Killing child PID: %s", child.pid)
                     child.kill()
                     child.wait()
+        """
