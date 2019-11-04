@@ -1250,7 +1250,14 @@ class DagFileProcessorManager(LoggingMixin):
                     self._last_finish_time[file_path] = now
                     runtime = now - self._start_time.get(file_path, now)
                     self._last_runtime[file_path] = runtime
-                    self._processors.pop(file_path)
+                    # todo(chiven): if DagFileManager restart, the file_path info of last DagFileManager is still in rabbitmq,
+                    # so these file_paths don't exist in this self._processors
+                    if file_path in self._processors:
+                        self._processors.pop(file_path)
+                    else:
+                        self.log.warning(
+                            "path %s not in self._processors, this shouldn't happend, "
+                            "unless DagFileManager restart.", file_path)
                     self.log.debug("Receive simpledag %s got from dag file %s, and spent %d seconds",
                                    file_path, simple_dag.dag_id, runtime)
 
