@@ -1170,8 +1170,10 @@ class DagFileProcessorManager(LoggingMixin):
         from airflow.dagfile_process.processor import file_processor
         for file_path in file_paths:
             if not zipfile.is_zipfile(file_path):
+                file_content = {}
+                file_name = os.path.split(file_path)[-1]
                 with open(file_path, 'r', encoding='utf8') as f:
-                    file_content = f.readlines()
+                    file_content[file_name] = f.readlines()
                 self._task_args[file_path] = [self._pickle_dags, self._dag_ids, file_content, file_path, file_processor]
 
     def wait_until_finished(self):

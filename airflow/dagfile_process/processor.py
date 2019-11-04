@@ -86,10 +86,10 @@ def file_processor(do_pickle, dag_ids, file_tag, dag_contents):
         if not os.path.exists(dag_folder):
             os.makedirs(dag_folder)
 
-        for k,v in dag_contents.items():
-            file_path = os.path.join(dag_folder, k)
+        for name,content in dag_contents.items():
+            file_path = os.path.join(dag_folder, name)
             with open(file_path, 'w', encoding='utf8') as dagfile:
-                dagfile.writelines(v)
+                dagfile.writelines(content)
             log.debug("dag_contents have been saved in %s", file_path)
     else:
         log.error("args.dag_contents is not dict")
