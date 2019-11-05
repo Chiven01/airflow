@@ -18,9 +18,7 @@ def rsa_decrypt(ptoken):
     strcode = base64.b64decode(data)
     
     # load public key
-    path1=os.path.abspath('.')   # 表示当前所处的文件夹的绝对路径
-    print(path1)
-    pkey = M2Crypto.RSA.load_pub_key('/search/odin/airflow/pub.pem')
+    pkey = M2Crypto.RSA.load_pub_key(settings.AIRFLOW_HOME + '/pub.pem')
     
     # decrypt
     output = pkey.public_decrypt(strcode, M2Crypto.RSA.pkcs1_padding)
