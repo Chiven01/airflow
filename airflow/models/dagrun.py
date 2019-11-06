@@ -17,6 +17,8 @@
 # specific language governing permissions and limitations
 # under the License.
 from typing import Optional, cast
+from croniter import croniter
+from datetime import datetime
 
 import six
 from sqlalchemy import (
@@ -302,32 +304,35 @@ class DagRun(Base, LoggingMixin):
         root_ids = [t.task_id for t in dag.roots]
         roots = [t for t in tis if t.task_id in root_ids]
 
-        # if all roots finished and at least one failed, the run failed
-        if (not unfinished_tasks and
-                any(r.state in (State.FAILED, State.UPSTREAM_FAILED) for r in roots)):
-            self.log.info('Marking run %s failed', self)
-            self.set_state(State.FAILED)
-            dag.handle_callback(self, success=False, reason='task_failure',
-                                session=session)
-
-        # if all roots succeeded and no unfinished tasks, the run succeeded
-        elif not unfinished_tasks and all(r.state in (State.SUCCESS, State.SKIPPED)
-                                          for r in roots):
-            self.log.info('Marking run %s successful', self)
-            self.set_state(State.SUCCESS)
-            dag.handle_callback(self, success=True, reason='success', session=session)
-
-        # if *all tasks* are deadlocked, the run failed
-        elif (unfinished_tasks and none_depends_on_past and
-              none_task_concurrency and no_dependencies_met):
-            self.log.info('Deadlock; marking run %s failed', self)
-            self.set_state(State.FAILED)
-            dag.handle_callback(self, success=False, reason='all_tasks_deadlocked',
-                                session=session)
-
-        # finally, if the roots aren't done, the dag is still running
-        else:
+        if len(tis) != len(dag.tasks):
             self.set_state(State.RUNNING)
+        else:
+            # if all roots finished and at least one failed, the run failed
+            if (not unfinished_tasks and
+                    any(r.state in (State.FAILED, State.UPSTREAM_FAILED) for r in roots)):
+                self.log.info('Marking run %s failed', self)
+                self.set_state(State.FAILED)
+                dag.handle_callback(self, success=False, reason='task_failure',
+                                    session=session)
+
+            # if all roots succeeded and no unfinished tasks, the run succeeded
+            elif not unfinished_tasks and all(r.state in (State.SUCCESS, State.SKIPPED)
+                                              for r in roots):
+                self.log.info('Marking run %s successful', self)
+                self.set_state(State.SUCCESS)
+                dag.handle_callback(self, success=True, reason='success', session=session)
+
+            # if *all tasks* are deadlocked, the run failed
+            elif (unfinished_tasks and none_depends_on_past and
+                  none_task_concurrency and no_dependencies_met):
+                self.log.info('Deadlock; marking run %s failed', self)
+                self.set_state(State.FAILED)
+                dag.handle_callback(self, success=False, reason='all_tasks_deadlocked',
+                                    session=session)
+
+            # finally, if the roots aren't done, the dag is still running
+            else:
+                self.set_state(State.RUNNING)
 
         self._emit_duration_stats_for_finished_state()
 
@@ -388,12 +393,27 @@ class DagRun(Base, LoggingMixin):
             if task.start_date > self.execution_date and not self.is_backfill:
                 continue
 
-            if task.task_id not in task_ids:
-                Stats.incr(
-                    "task_instance_created-{}".format(task.__class__.__name__),
-                    1, 1)
+            execution_date_naive = timezone.make_naive(self.execution_date) 
+            # robin
+            if task._schedule_interval:
+                cron = croniter(task._schedule_interval, execution_date_naive)
+            else:
+                cron = croniter(dag._schedule_interval, execution_date_naive)
+            # execution date
+            follow = cron.get_next(datetime)
+            # period end date
+            follow = cron.get_next(datetime)
+            self.log.info("Task [{}] will be create at: {}".format(task.task_id,follow))
+            if task.task_id not in task_ids and follow < datetime.now():
                 ti = TaskInstance(task, self.execution_date)
                 session.add(ti)
+            
+            #if task.task_id not in task_ids:
+            #    Stats.incr(
+            #        "task_instance_created-{}".format(task.__class__.__name__),
+            #        1, 1)
+            #    ti = TaskInstance(task, self.execution_date)
+            #    session.add(ti)
 
         session.commit()
 
