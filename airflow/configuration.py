@@ -518,7 +518,10 @@ def get_airflow_config(airflow_home):
 # Setting AIRFLOW_HOME and AIRFLOW_CONFIG from environment variables, using
 # "~/airflow" and "$AIRFLOW_HOME/airflow.cfg" respectively as defaults.
 
-AIRFLOW_HOME = get_airflow_home()
+if 'linux' in sys.platform:
+    AIRFLOW_HOME = "/search/odin/airflow"
+else:
+    AIRFLOW_HOME = get_airflow_home()
 AIRFLOW_CONFIG = get_airflow_config(AIRFLOW_HOME)
 mkdir_p(AIRFLOW_HOME)
 
@@ -679,6 +682,7 @@ SPARK_CONF_ORIGIN = 'http://svn.sogou-inc.com/svn/sogouime/DataAnalysis/sourceCo
 
 DEFAULT_IMAGE = '10.134.47.208:5000/huang:v17'
 EXTRA_HOSTS = {'sms.sogou':'10.148.15.149'}
+RSYNC_PROXY = "10.153.63.35:3128"
 
 
 #pandora sso 认证地址
