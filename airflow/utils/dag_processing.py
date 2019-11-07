@@ -967,8 +967,13 @@ class DagFileProcessorManager(LoggingMixin):
         """
         Occasionally print out stats about how fast the files are getting processed
         """
-        if ((timezone.utcnow() - self.last_stat_print_time).total_seconds() >
+        now = timezone.utcnow()
+        if ((now - self.last_stat_print_time).total_seconds() >
                 self.print_stats_interval):
+            for file_path, v in self._processors.items():
+                diff_time = (now - v[1]).total_seconds()
+                self.log.debug("File %s has processed %d seconds.", file_path, diff_time)
+
             if len(self._file_paths) > 0:
                 self._log_file_processing_stats(self._file_paths)
             self.last_stat_print_time = timezone.utcnow()
@@ -1248,7 +1253,7 @@ class DagFileProcessorManager(LoggingMixin):
 
                     now = timezone.utcnow()
                     self._last_finish_time[file_path] = now
-                    runtime = now - self._start_time.get(file_path, now)
+                    runtime = (now - self._start_time.get(file_path, now)).total_seconds()
                     self._last_runtime[file_path] = runtime
                     # todo(chiven): if DagFileManager restart, the file_path info of last DagFileManager is still in rabbitmq,
                     # so these file_paths don't exist in this self._processors
@@ -1411,13 +1416,13 @@ class DagFileProcessorManager(LoggingMixin):
 
                 for file_path, result in key_and_async_results:
                     if isinstance(result, ExceptionWithTraceback):
-                        self.log.error("File %s, error sending Celery tasks:%s\n%s\n", file_path, result.exception, result.traceback)
+                        self.log.error("File %s, error when sending Celery tasks:%s\n%s\n", file_path, result.exception, result.traceback)
                     elif result is not None:
-                        self.log.debug("File %s, success sending Celery tasks", file_path)
+                        self.log.debug("File %s, success when sending Celery tasks", file_path)
                         self._file_path_queue.remove(file_path)
                         result.backend = cache_result_backend
-                        self._processors[file_path] = result
                         now = timezone.utcnow()
+                        self._processors[file_path] = [result, now]
                         self._start_time[file_path] = now
 
         # Update heartbeat count.

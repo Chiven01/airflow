@@ -38,7 +38,7 @@ def productor(body):
     conn.close()
 
 
-def consumer():
+def consumer(log):
     results = []
     conn = get_connection()
     channel = conn.channel()
@@ -54,7 +54,7 @@ def consumer():
         try:
             channel.start_consuming()
         except AirflowTaskTimeout as e:
-            print("Spend 1 seconds receiving %d simpledag_str" % len(results))
+            log.debug("Spend 1 seconds receiving %d simpledag_str", len(results))
     conn.close()
     return results
 
