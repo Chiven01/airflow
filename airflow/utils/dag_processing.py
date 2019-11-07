@@ -1085,7 +1085,7 @@ class DagFileProcessorManager(LoggingMixin):
         if file_path in self._processors:
             # return self._processors[file_path].pid
             # AsyncResult instance's id
-            return self._processors[file_path].id
+            return self._processors[file_path][0].id
         return None
 
     def get_all_pids(self):
@@ -1093,7 +1093,7 @@ class DagFileProcessorManager(LoggingMixin):
         :return: a list of the PIDs for the processors that are running
         :rtype: List[int]
         """
-        return [x.pid for x in self._processors.values()]
+        return [x[0].pid for x in self._processors.values()]
 
     def get_runtime(self, file_path):
         """
@@ -1242,7 +1242,7 @@ class DagFileProcessorManager(LoggingMixin):
     def collect_results_celery(self):
         simple_dags = []
         # Consume simpledags from worker, which parse dagfiles.
-        results = consumer()
+        results = consumer(self.log)
         self.log.debug("Receive results from %d celery dagprocessors.", len(results))
         for result in results:
             res_dict = pickle.loads(result)
@@ -1443,16 +1443,18 @@ class DagFileProcessorManager(LoggingMixin):
         """
         Kill any file processors that timeout to defend against process hangs.
         """
-        now = timezone.utcnow()
-        for file_path, processor in self._processors.items():
-            duration = now - processor.start_time
-            if duration > self._processor_timeout:
-                self.log.info(
-                    "Processor for %s with PID %s started at %s has timed out, "
-                    "killing it.",
-                    processor.file_path, processor.pid, processor.start_time.isoformat())
-                Stats.incr('dag_file_processor_timeouts', 1, 1)
-                processor.kill()
+        # todo(chiven): need to do
+        self.log.warning("Method _kill_timed_out_processors not work.")
+        # now = timezone.utcnow()
+        # for file_path, processor in self._processors.items():
+        #     duration = now - processor.start_time
+        #     if duration > self._processor_timeout:
+        #         self.log.info(
+        #             "Processor for %s with PID %s started at %s has timed out, "
+        #             "killing it.",
+        #             processor.file_path, processor.pid, processor.start_time.isoformat())
+        #         Stats.incr('dag_file_processor_timeouts', 1, 1)
+        #         processor.kill()
 
     def max_runs_reached(self):
         """
