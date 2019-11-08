@@ -50,11 +50,11 @@ def consumer(log):
     channel.basic_consume(QUEUE,
                           callback,
                           auto_ack=True)
-    with timeout(seconds=1):
-        try:
+    try:
+        with timeout(seconds=1):
             channel.start_consuming()
-        except AirflowTaskTimeout as e:
-            log.debug("Spend 1 seconds receiving %d simpledag_str", len(results))
+    except AirflowTaskTimeout as e:
+        log.debug("Spend 1 seconds receiving %d simpledag_str", len(results))
     conn.close()
     return results
 
@@ -82,7 +82,7 @@ def file_processor(do_pickle, dag_ids, file_tag, dag_contents):
     log = LoggingMixin().log
 
     if dag_contents and isinstance(dag_contents, dict):
-        dag_folder = conf.get('dagfileprocessor', 'DAGFILES_FOLDER')
+        dag_folder = conf.get('core', 'DAGS_FOLDER')
         if not os.path.exists(dag_folder):
             os.makedirs(dag_folder)
 
@@ -107,9 +107,9 @@ def file_processor(do_pickle, dag_ids, file_tag, dag_contents):
     try:
         body = pickle.dumps(results)
         productor(body)
-        log.debug("Successed when send samepledags to rabbitmq.")
+        log.debug("Successed when send samepledags to rabbitmq, file %s." , file_path)
     except:
-        log.debug("Failed when send samepledags to rabbitmq.")
+        log.debug("Failed when send samepledags to rabbitmq, file %s." , file_path)
 
 
 

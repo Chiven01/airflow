@@ -1247,30 +1247,55 @@ class DagFileProcessorManager(LoggingMixin):
         for result in results:
             res_dict = pickle.loads(result)
             for file_path, dags in res_dict.items():
-                for simple_dag in dags:
+                if len(dags) == 0:
+                    self.log.debug("File %s must be paused, if not, "
+                                   "maybe some error occur when parsing it.", file_path)
+                    self._setup_file_paths(file_path)
+                    continue
 
+                for simple_dag in dags:
                     simple_dags.append(simple_dag)
 
-                    now = timezone.utcnow()
-                    self._last_finish_time[file_path] = now
-                    runtime = (now - self._start_time.get(file_path, now)).total_seconds()
-                    self._last_runtime[file_path] = runtime
-                    # todo(chiven): if DagFileManager restart, the file_path info of last DagFileManager is still in rabbitmq,
-                    # so these file_paths don't exist in this self._processors
-                    if file_path in self._processors:
-                        self._processors.pop(file_path)
-                    else:
-                        self.log.warning(
-                            "path %s not in self._processors, this shouldn't happend, "
-                            "unless DagFileManager restart.", file_path)
+                    self._setup_file_paths(file_path)
                     self.log.debug("Receive simpledag %s got from dag file %s, and spent %d seconds",
-                                   file_path, simple_dag.dag_id, runtime)
+                                   file_path, simple_dag.dag_id, self._last_runtime[file_path])
 
                     self._run_count[file_path] += 1
 
-        #todo(chiven): kill timeout tasks, and clear up relevant data
+        # todo(chiven): kill timeout tasks, and clear up relevant data
+        running_processors = {}
+        timeout_processors = []
+        for file_path, v in self._processors.items():
+            diff_time = (timezone.utcnow() - v[1]).total_seconds()
+            if diff_time > self._processor_timeout.total_seconds():
+                timeout_processors.append(file_path)
+            else:
+                running_processors[file_path] = v
+
+
+        if len(timeout_processors) > 0:
+            self.log.debug("File processors timeout, and rejoin to queue, details as follow:\n%s", timeout_processors)
+            self._file_path_queue.extend(timeout_processors)
+            self.log.debug("%d files are queued to process.", len(self._file_path_queue))
+        self._processors = running_processors
 
         return simple_dags
+
+    def _setup_file_paths(self, file_path):
+        now = timezone.utcnow()
+        self._last_finish_time[file_path] = now
+        runtime = (now - self._start_time.get(file_path, now)).total_seconds()
+        self._last_runtime[file_path] = runtime
+
+        # todo(chiven): if DagFileManager restart, the file_path info of last DagFileManager is still in rabbitmq,
+        #  so these file_paths don't exist in this self._processors
+        if file_path in self._processors:
+            self._processors.pop(file_path)
+        else:
+            self.log.warning(
+                "path %s not in self._processors, this shouldn't happend, "
+                "unless DagFileManager restart or process timeout.", file_path)
+
 
     # def heartbeat(self):
     #     """
@@ -1396,7 +1421,6 @@ class DagFileProcessorManager(LoggingMixin):
                 else:
                     self.log.warning("File %s not exist in _task_args, this shouldn't happend.", file_path)
 
-            cache_result_backend = None
             if task_tuples_to_send:
                 tasks = [t[4] for t in task_tuples_to_send]
                 cache_result_backend = tasks[0]
