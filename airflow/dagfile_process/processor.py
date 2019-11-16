@@ -3,13 +3,45 @@
 import os
 import pika
 import pickle
+import signal
+import os
 
 from celery import Celery
 from airflow import configuration as conf
 from airflow.utils.log.logging_mixin import LoggingMixin
-from airflow.utils.timeout import timeout
 from airflow.exceptions import AirflowTaskTimeout
 
+
+class PikaTimeout():
+    """
+    To be used in a ``with`` block and timeout its content.
+    """
+
+    def __init__(self, log, channel, seconds=1, error_message='Timeout'):
+        self.seconds = seconds
+        self.log = log
+        self.channel = channel
+        self.error_message = error_message + ', PID: ' + str(os.getpid())
+
+    def handle_timeout(self, signum, frame):
+        self.log.error("Process timed out, PID: %s", str(os.getpid()))
+        self.channel.stop_consuming()
+        raise AirflowTaskTimeout(self.error_message)
+
+    def __enter__(self):
+        try:
+            signal.signal(signal.SIGALRM, self.handle_timeout)
+            signal.alarm(self.seconds)
+        except ValueError as e:
+            self.log.warning("timeout can't be used in the current context")
+            self.log.exception(e)
+
+    def __exit__(self, type, value, traceback):
+        try:
+            signal.alarm(0)
+        except ValueError as e:
+            self.log.warning("timeout can't be used in the current context")
+            self.log.exception(e)
 
 
 QUEUE = 'python_conn_test'
@@ -45,17 +77,23 @@ def consumer(log):
     channel.queue_declare(queue=QUEUE)
 
     def callback(ch, method, properties, body):
+        log.debug("Get one message, size is %d.", len(body))
         results.append(body)
 
     channel.basic_consume(QUEUE,
                           callback,
                           auto_ack=True)
     try:
-        with timeout(seconds=1):
+        with PikaTimeout(log, channel, seconds=1):
             channel.start_consuming()
     except AirflowTaskTimeout as e:
         log.debug("Spend 1 seconds receiving %d simpledag_str", len(results))
-    conn.close()
+    except Exception as e:
+        log.debug("Unexpected exception occur.")
+        log.error(e)
+
+    if not conn.is_closed:
+        conn.close()
     return results
 
 section = "dagfileprocessor_celery"
