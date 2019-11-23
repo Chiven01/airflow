@@ -27,7 +27,7 @@ app = Celery(
 
 
 @app.task
-def file_processor(do_pickle, dag_ids, file_changed, file_tag, dag_contents):
+def file_processor(do_pickle, dag_ids, file_changed, dag_contents):
     #todo(chiven): Do not use 'return' to exit, beacause sometimes it will be ambiguous
     log = LoggingMixin().log
 

@@ -303,7 +303,7 @@ def send_processor(processor_tuple):
     pickle_dags, dag_ids, file_changed, file_content, file_path, task = processor_tuple
     try:
         with timeout(seconds=2):
-            result = task.apply_async(args=[pickle_dags, dag_ids, file_changed, file_path, file_content],
+            result = task.apply_async(args=[pickle_dags, dag_ids, file_changed, file_content],
                                       queue=conf.get('dagfileprocessor_celery', 'default_queue'))
     except Exception as e:
         exception_traceback = "Celery Task ID: {}\n{}".format(file_path,
