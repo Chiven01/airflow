@@ -115,8 +115,10 @@ celery_config = {
 app = Celery(
     conf.get(section, 'CELERY_APP_NAME'), config_source=celery_config)
 
+
 @app.task
-def file_processor(do_pickle, dag_ids, file_tag, dag_contents):
+def file_processor(do_pickle, dag_ids, file_changed, file_tag, dag_contents):
+    #todo(chiven): Do not use 'return' to exit, beacause sometimes it will be ambiguous
     log = LoggingMixin().log
 
     if dag_contents and isinstance(dag_contents, dict):
@@ -136,8 +138,32 @@ def file_processor(do_pickle, dag_ids, file_tag, dag_contents):
     from airflow import jobs, settings
     settings.configure_orm()
     scheduler_job = jobs.SchedulerJob(dag_ids=dag_ids, log=log)
-    simple_dags = scheduler_job.process_file(file_path, do_pickle)
-    log.info("File %s's processing has finished , send back simpledags now.", file_path)
+    simple_dags = scheduler_job.process_file(file_path, file_changed, do_pickle)
+    log.info("File %s's processing has finished.", file_path)
+
+    if len(simple_dags) > 0:
+        from airflow.utils.dag_processing import SimpleDagBag
+        simple_dag_bag = SimpleDagBag(simple_dags)
+        # Handle cases where a DAG run state is set (perhaps manually) to
+        # a non-running state. Handle task instances that belong to
+        # DAG runs in those states
+
+        # If a task instance is up for retry but the corresponding DAG run
+        # isn't running, mark the task instance as FAILED so we don't try
+        # to re-run it.
+        from airflow.utils.state import State
+        scheduler_job._change_state_for_tis_without_dagrun(simple_dag_bag,
+                                                  [State.UP_FOR_RETRY],
+                                                  State.FAILED)
+
+        # If a task instance is scheduled or queued or up for reschedule,
+        # but the corresponding DAG run isn't running, set the state to
+        # NONE so we don't try to re-run it.
+        scheduler_job._change_state_for_tis_without_dagrun(simple_dag_bag,
+                                                  [State.QUEUED,
+                                                   State.SCHEDULED,
+                                                   State.UP_FOR_RESCHEDULE],
+                                                  State.NONE)
 
     results = {}
     results[file_tag] = simple_dags

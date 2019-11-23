@@ -1410,25 +1410,6 @@ class SchedulerJob(BaseJob):
                 try:
                     simple_dag_bag = SimpleDagBag(simple_dags)
 
-                    # Handle cases where a DAG run state is set (perhaps manually) to
-                    # a non-running state. Handle task instances that belong to
-                    # DAG runs in those states
-
-                    # If a task instance is up for retry but the corresponding DAG run
-                    # isn't running, mark the task instance as FAILED so we don't try
-                    # to re-run it.
-                    self._change_state_for_tis_without_dagrun(simple_dag_bag,
-                                                              [State.UP_FOR_RETRY],
-                                                              State.FAILED)
-                    # If a task instance is scheduled or queued or up for reschedule,
-                    # but the corresponding DAG run isn't running, set the state to
-                    # NONE so we don't try to re-run it.
-                    self._change_state_for_tis_without_dagrun(simple_dag_bag,
-                                                              [State.QUEUED,
-                                                               State.SCHEDULED,
-                                                               State.UP_FOR_RESCHEDULE],
-                                                              State.NONE)
-
                     self._execute_task_instances(simple_dag_bag,
                                                  (State.SCHEDULED,))
                 except Exception as e:
@@ -1494,7 +1475,7 @@ class SchedulerJob(BaseJob):
         settings.Session.remove()
 
     @provide_session
-    def process_file(self, file_path, pickle_dags=False, session=None):
+    def process_file(self, file_path, file_changed=False, pickle_dags=False, session=None):
         """
         Process a Python file containing Airflow DAGs.
 
@@ -1551,7 +1532,7 @@ class SchedulerJob(BaseJob):
                 dag = dagbag.get_dag(dag_id)
                 pickle_id = None
                 if pickle_dags:
-                    pickle_id = dag.pickle(session).id
+                    pickle_id = dag.pickle(file_changed, session).id
                 simple_dags.append(SimpleDag(dag, pickle_id=pickle_id))
 
         if len(self.dag_ids) > 0:

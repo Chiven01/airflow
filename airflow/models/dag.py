@@ -1084,19 +1084,25 @@ class DAG(BaseDag, LoggingMixin):
         return d
 
     @provide_session
-    def pickle(self, session=None):
+    def pickle(self, file_changed=False, session=None):
         dag = session.query(
             DagModel).filter(DagModel.dag_id == self.dag_id).first()
         dp = None
         if dag and dag.pickle_id:
             dp = session.query(DagPickle).filter(
                 DagPickle.id == dag.pickle_id).first()
-        if not dp or dp.pickle != self:
+        if not dp or file_changed:
             dp = DagPickle(dag=self)
             session.add(dp)
             self.last_pickled = timezone.utcnow()
             session.commit()
+
             self.pickle_id = dp.id
+
+            dag.pickle_id = dp.id
+            dag.last_pickled = self.last_pickled
+            session.merge(dag)
+            session.commit()
 
         return dp
 

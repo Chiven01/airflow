@@ -42,6 +42,7 @@ from collections import namedtuple
 from importlib import import_module
 import enum
 from typing import Optional
+from datetime import datetime
 
 import psutil
 from setproctitle import setproctitle
@@ -61,6 +62,7 @@ from airflow.utils.helpers import reap_process_group
 from airflow.utils.db import provide_session
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow import configuration
+from airflow.utils.svn import svnclient
 from airflow.utils.timeout import timeout
 from airflow.dagfile_process.processor import consumer
 
@@ -299,10 +301,10 @@ class ExceptionWithTraceback(object):
         self.traceback = exception_traceback
 
 def send_processor(processor_tuple):
-    pickle_dags, dag_ids, file_content, file_path, task = processor_tuple
+    pickle_dags, dag_ids, file_changed, file_content, file_path, task = processor_tuple
     try:
         with timeout(seconds=2):
-            result = task.apply_async(args=[pickle_dags, dag_ids, file_path, file_content],
+            result = task.apply_async(args=[pickle_dags, dag_ids, file_changed, file_path, file_content],
                                       queue=conf.get('dagfileprocessor_celery', 'default_queue'))
     except Exception as e:
         exception_traceback = "Celery Task ID: {}\n{}".format(file_path,
@@ -796,6 +798,8 @@ class DagFileProcessorManager(LoggingMixin):
         if len(self._file_paths) > 0:
             self._set_file_contents(self._file_paths)
 
+        self._file_last_changed = {}
+
         self._sync_parallelism = configuration.getint('dagfileprocessor_celery', 'SYNC_PARALLELISM')
         if self._sync_parallelism == 0:
             self._sync_parallelism = max(1, cpu_count() - 1)
@@ -950,6 +954,10 @@ class DagFileProcessorManager(LoggingMixin):
         elapsed_time_since_refresh = (timezone.utcnow() -
                                       self.last_dag_dir_refresh_time).total_seconds()
         if elapsed_time_since_refresh > self.dag_dir_list_interval:
+            # Update dags
+            svnclient.update(self._dag_directory)
+            self.log.info("Update files in {}".format(self._dag_directory))
+
             # Build up a list of Python files that could contain DAGs
             self.log.info("Searching for files in %s", self._dag_directory)
             self._file_paths = list_py_file_paths(self._dag_directory)
@@ -1168,18 +1176,26 @@ class DagFileProcessorManager(LoggingMixin):
 
     def _set_file_contents(self, file_paths):
         if len(file_paths) == 0:
-            self.log.debug("No file path is needed to process.")
+            self.log.info("No file path is needed to process.")
             self._task_args.clear()
             return
 
         from airflow.dagfile_process.processor import file_processor
         for file_path in file_paths:
             if not zipfile.is_zipfile(file_path):
+                file_last_changed_on_disk = datetime.fromtimestamp(os.path.getmtime(file_path))
+                if file_path in self._file_last_changed \
+                    and file_last_changed_on_disk == self._file_last_changed[file_path]:
+                    file_changed = False
+                else:
+                    self._file_last_changed[file_path] = file_last_changed_on_disk
+                    file_changed = True
+
                 file_content = {}
                 file_name = os.path.split(file_path)[-1]
                 with open(file_path, 'r', encoding='utf8') as f:
                     file_content[file_name] = f.readlines()
-                self._task_args[file_path] = [self._pickle_dags, self._dag_ids, file_content, file_path, file_processor]
+                self._task_args[file_path] = [self._pickle_dags, self._dag_ids, file_changed, file_content, file_path, file_processor]
 
     def wait_until_finished(self):
         """
@@ -1422,7 +1438,7 @@ class DagFileProcessorManager(LoggingMixin):
                     self.log.warning("File %s not exist in _task_args, this shouldn't happend.", file_path)
 
             if task_tuples_to_send:
-                tasks = [t[4] for t in task_tuples_to_send]
+                tasks = [t[-1] for t in task_tuples_to_send]
                 cache_result_backend = tasks[0]
 
                 chunksize = self._num_tasks_per_send_process(len(task_tuples_to_send))
