@@ -312,6 +312,18 @@ def send_processor(processor_tuple):
 
     return file_path, result
 
+def fetch_task_state(celery_task):
+    try:
+        with timeout(seconds=2):
+            # Accessing state property of celery task will make actual network request
+            # to get the current state of the task.
+            res = (celery_task[0], celery_task[1][0].state)
+    except Exception as e:
+        exception_traceback = "Celery Task ID: {}\n{}".format(celery_task[0],
+                                                              traceback.format_exc())
+        res = ExceptionWithTraceback(e, exception_traceback)
+    return res
+
 def correct_maybe_zipped(fileloc):
     """
     If the path contains a folder with a .zip suffix, then
@@ -789,11 +801,12 @@ class DagFileProcessorManager(LoggingMixin):
         self._pickle_dags = pickle_dags
         self._dag_ids = dag_ids
 
+        self._file_last_changed = {}
+
         self._task_args = {}
         if len(self._file_paths) > 0:
             self._set_file_contents(self._file_paths)
 
-        self._file_last_changed = {}
 
         self._sync_parallelism = configuration.getint('dagfileprocessor_celery', 'SYNC_PARALLELISM')
         if self._sync_parallelism == 0:
@@ -1232,19 +1245,6 @@ class DagFileProcessorManager(LoggingMixin):
         self._processors = running_processors
 
     def _process_sended_tasks(self):
-
-        def fetch_task_state(celery_task):
-            try:
-                with timeout(seconds=2):
-                    # Accessing state property of celery task will make actual network request
-                    # to get the current state of the task.
-                    res = (celery_task[0], celery_task[1][0].state)
-            except Exception as e:
-                exception_traceback = "Celery Task ID: {}\n{}".format(celery_task[0],
-                                                                      traceback.format_exc())
-                res = ExceptionWithTraceback(e, exception_traceback)
-            return res
-
         chunksize = self._num_tasks_per_send_process(len(self._processors))
         num_processor = min(len(self._processors), self._sync_parallelism)
         send_pool = Pool(processes=num_processor)
@@ -1291,7 +1291,8 @@ class DagFileProcessorManager(LoggingMixin):
             have finished since the last time this was called
         :rtype: list[airflow.utils.dag_processing.SimpleDag]
         """
-        self._process_sended_tasks()
+        if len(self._processors) > 0:
+            self._process_sended_tasks()
 
         # Generate more file paths to process if we processed all the files
         # already.
