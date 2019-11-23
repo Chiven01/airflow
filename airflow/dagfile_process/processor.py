@@ -1,100 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import os
-import pika
-import pickle
-import signal
-import os
 
 from celery import Celery
 from airflow import configuration as conf
 from airflow.utils.log.logging_mixin import LoggingMixin
-from airflow.exceptions import AirflowTaskTimeout
-
-
-class PikaTimeout():
-    """
-    To be used in a ``with`` block and timeout its content.
-    """
-
-    def __init__(self, log, channel, seconds=1, error_message='Timeout'):
-        self.seconds = seconds
-        self.log = log
-        self.channel = channel
-        self.error_message = error_message + ', PID: ' + str(os.getpid())
-
-    def handle_timeout(self, signum, frame):
-        self.log.error("Process timed out, PID: %s", str(os.getpid()))
-        self.channel.stop_consuming()
-        raise AirflowTaskTimeout(self.error_message)
-
-    def __enter__(self):
-        try:
-            signal.signal(signal.SIGALRM, self.handle_timeout)
-            signal.alarm(self.seconds)
-        except ValueError as e:
-            self.log.warning("timeout can't be used in the current context")
-            self.log.exception(e)
-
-    def __exit__(self, type, value, traceback):
-        try:
-            signal.alarm(0)
-        except ValueError as e:
-            self.log.warning("timeout can't be used in the current context")
-            self.log.exception(e)
-
-
-QUEUE = 'python_conn_test'
-
-def get_connection():
-    HOST = '10.142.106.205'
-    PORT = '5672'
-    USER = 'airflow'
-    PASS = 'airflow'
-
-    #need to process ConnectionBlockedTimeout
-    conn = pika.BlockingConnection(
-           pika.ConnectionParameters(HOST,
-                                     PORT,
-                                     credentials=pika.PlainCredentials(USER, PASS),
-                                     blocked_connection_timeout=2))
-    return conn
-
-def productor(body):
-    conn = get_connection()
-    channel = conn.channel()
-    channel.queue_declare(queue=QUEUE)
-    channel.basic_publish(exchange='',
-                          routing_key=QUEUE,
-                          body=body)
-    conn.close()
-
-
-def consumer(log):
-    results = []
-    conn = get_connection()
-    channel = conn.channel()
-    channel.queue_declare(queue=QUEUE)
-
-    def callback(ch, method, properties, body):
-        log.debug("Get one message, size is %d.", len(body))
-        results.append(body)
-
-    channel.basic_consume(QUEUE,
-                          callback,
-                          auto_ack=True)
-    try:
-        with PikaTimeout(log, channel, seconds=1):
-            channel.start_consuming()
-    except AirflowTaskTimeout as e:
-        log.debug("Spend 1 seconds receiving %d simpledag_str", len(results))
-    except Exception as e:
-        log.debug("Unexpected exception occur.")
-        log.error(e)
-
-    if not conn.is_closed:
-        conn.close()
-    return results
 
 section = "dagfileprocessor_celery"
 broker_url = conf.get(section, 'BROKER_URL')
@@ -138,12 +48,10 @@ def file_processor(do_pickle, dag_ids, file_changed, file_tag, dag_contents):
     from airflow import jobs, settings
     settings.configure_orm()
     scheduler_job = jobs.SchedulerJob(dag_ids=dag_ids, log=log)
-    simple_dags = scheduler_job.process_file(file_path, file_changed, do_pickle)
+    dags = scheduler_job.process_file(file_path, file_changed, do_pickle)
     log.info("File %s's processing has finished.", file_path)
 
-    if len(simple_dags) > 0:
-        from airflow.utils.dag_processing import SimpleDagBag
-        simple_dag_bag = SimpleDagBag(simple_dags)
+    if len(dags) > 0:
         # Handle cases where a DAG run state is set (perhaps manually) to
         # a non-running state. Handle task instances that belong to
         # DAG runs in those states
@@ -152,28 +60,19 @@ def file_processor(do_pickle, dag_ids, file_changed, file_tag, dag_contents):
         # isn't running, mark the task instance as FAILED so we don't try
         # to re-run it.
         from airflow.utils.state import State
-        scheduler_job._change_state_for_tis_without_dagrun(simple_dag_bag,
+        scheduler_job._change_state_for_tis_without_dagrun(dags,
                                                   [State.UP_FOR_RETRY],
                                                   State.FAILED)
 
         # If a task instance is scheduled or queued or up for reschedule,
         # but the corresponding DAG run isn't running, set the state to
         # NONE so we don't try to re-run it.
-        scheduler_job._change_state_for_tis_without_dagrun(simple_dag_bag,
-                                                  [State.QUEUED,
+        scheduler_job._change_state_for_tis_without_dagrun(dags,
+                                                   [State.QUEUED,
                                                    State.SCHEDULED,
                                                    State.UP_FOR_RESCHEDULE],
                                                   State.NONE)
 
-    results = {}
-    results[file_tag] = simple_dags
-
-    try:
-        body = pickle.dumps(results)
-        productor(body)
-        log.debug("Successed when send samepledags to rabbitmq, file %s." , file_path)
-    except:
-        log.debug("Failed when send samepledags to rabbitmq, file %s." , file_path)
 
 
 

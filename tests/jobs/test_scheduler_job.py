@@ -1072,7 +1072,7 @@ class SchedulerJobTest(unittest.TestCase):
         executor.queued_tasks
         scheduler.executor = executor
         processor = mock.MagicMock()
-        processor.harvest_simple_dags.return_value = [dag]
+        processor.harvest_message.return_value = [dag]
         processor.done = True
         scheduler.processor_agent = processor
 

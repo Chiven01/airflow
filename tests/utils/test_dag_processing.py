@@ -281,7 +281,7 @@ class TestDagFileProcessorAgent(unittest.TestCase):
         while not processor_agent.done:
             if not async_mode:
                 processor_agent.wait_until_finished()
-            parsing_result.extend(processor_agent.harvest_simple_dags())
+            parsing_result.extend(processor_agent.harvest_message())
 
         dag_ids = [result.dag_id for result in parsing_result]
         self.assertEqual(dag_ids.count('test_start_date_scheduling'), 1)

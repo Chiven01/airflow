@@ -776,7 +776,7 @@ class SchedulerJob(BaseJob):
 
     @provide_session
     def _change_state_for_tis_without_dagrun(self,
-                                             simple_dag_bag,
+                                             dags,
                                              old_states,
                                              new_state,
                                              session=None):
@@ -801,7 +801,7 @@ class SchedulerJob(BaseJob):
             .outerjoin(models.DagRun, and_(
                 models.TaskInstance.dag_id == models.DagRun.dag_id,
                 models.TaskInstance.execution_date == models.DagRun.execution_date)) \
-            .filter(models.TaskInstance.dag_id.in_(simple_dag_bag.dag_ids)) \
+            .filter(models.TaskInstance.dag_id.in_([dag.dag_id for dag in dags])) \
             .filter(models.TaskInstance.state.in_(old_states)) \
             .filter(or_(
                 models.DagRun.state != State.RUNNING,
@@ -860,8 +860,19 @@ class SchedulerJob(BaseJob):
             task_map[(dag_id, task_id)] = count
         return dag_map, task_map
 
+    def _get_dag(self, dag_id, session):
+        DM = models.DagModel
+        DP = models.DagPickle
+
+        pickle_id = (session.query(DM).filter(DM.dag_id == dag_id).first()).pickle_id
+        if pickle_id:
+            dag = (session.query(DP).filter(DP.id == pickle_id).first()).pickle
+            return dag
+        else:
+            return None
+
     @provide_session
-    def _find_executable_task_instances(self, simple_dag_bag, states, session=None):
+    def _find_executable_task_instances(self, states, session=None):
         """
         Finds TIs that are ready for execution with respect to pool limits,
         dag concurrency, executor state, and priority.
@@ -884,10 +895,17 @@ class SchedulerJob(BaseJob):
         TI = models.TaskInstance
         DR = models.DagRun
         DM = models.DagModel
+
+        # Additional filters on task instance state
+        if None in states:
+            ti_query = session.query(TI).filter(
+                or_(TI.state == None, TI.state.in_(states))  # noqa: E711 pylint: disable=singleton-comparison
+            )
+        else:
+            ti_query = session.query(TI).filter(TI.state.in_(states))
+
         ti_query = (
-            session
-            .query(TI)
-            .filter(TI.dag_id.in_(simple_dag_bag.dag_ids))
+            ti_query
             .outerjoin(
                 DR,
                 and_(DR.dag_id == TI.dag_id, DR.execution_date == TI.execution_date)
@@ -898,14 +916,6 @@ class SchedulerJob(BaseJob):
             .filter(or_(DM.dag_id == None,  # noqa: E711 pylint: disable=singleton-comparison
                     not_(DM.is_paused)))
         )
-
-        # Additional filters on task instance state
-        if None in states:
-            ti_query = ti_query.filter(
-                or_(TI.state == None, TI.state.in_(states))  # noqa: E711 pylint: disable=singleton-comparison
-            )
-        else:
-            ti_query = ti_query.filter(TI.state.in_(states))
 
         task_instances_to_examine = ti_query.all()
 
@@ -972,10 +982,13 @@ class SchedulerJob(BaseJob):
                 # Check to make sure that the task concurrency of the DAG hasn't been
                 # reached.
                 dag_id = task_instance.dag_id
-                simple_dag = simple_dag_bag.get_dag(dag_id)
+                dag = self._get_dag(dag_id, session)
+                if dag is None:
+                    self.log.debug("DAG %s's pickle_id not exist!", dag_id)
+                    continue
+                dag_concurrency_limit = dag.concurrency
 
                 current_dag_concurrency = dag_concurrency_map[dag_id]
-                dag_concurrency_limit = simple_dag_bag.get_dag(dag_id).concurrency
                 self.log.info(
                     "DAG %s has %s/%s running and queued tasks",
                     dag_id, current_dag_concurrency, dag_concurrency_limit
@@ -988,9 +1001,12 @@ class SchedulerJob(BaseJob):
                     )
                     continue
 
-                task_concurrency_limit = simple_dag.get_task_special_arg(
-                    task_instance.task_id,
-                    'task_concurrency')
+                task_obj = dag.task_dict.get(task_instance.task_id, None)
+                if task_obj is None:
+                    self.log.debug("Task %s's not found in %s's pickle!", task_instance.task_id, dag_id)
+                    continue
+                task_concurrency_limit = task_obj.task_concurrency
+
                 if task_concurrency_limit is not None:
                     current_task_concurrency = task_concurrency_map[
                         (task_instance.dag_id, task_instance.task_id)
@@ -1107,8 +1123,7 @@ class SchedulerJob(BaseJob):
                       len(tis_to_set_to_queued), task_instance_str)
         return simple_task_instances
 
-    def _enqueue_task_instances_with_queued_state(self, simple_dag_bag,
-                                                  simple_task_instances):
+    def _enqueue_task_instances_with_queued_state(self, simple_task_instances, session):
         """
         Takes task_instances, which should have been set to queued, and enqueues them
         with the executor.
@@ -1121,7 +1136,7 @@ class SchedulerJob(BaseJob):
         TI = models.TaskInstance
         # actually enqueue them
         for simple_task_instance in simple_task_instances:
-            simple_dag = simple_dag_bag.get_dag(simple_task_instance.dag_id)
+            dag = self._get_dag(simple_task_instance.dag_id, session)
             command = TI.generate_command(
                 simple_task_instance.dag_id,
                 simple_task_instance.task_id,
@@ -1133,8 +1148,8 @@ class SchedulerJob(BaseJob):
                 ignore_task_deps=False,
                 ignore_ti_state=False,
                 pool=simple_task_instance.pool,
-                file_path=simple_dag.full_filepath,
-                pickle_id=simple_dag.pickle_id)
+                file_path=dag.full_filepath,
+                pickle_id=dag.pickle_id)
 
             priority = simple_task_instance.priority_weight
             queue = simple_task_instance.queue
@@ -1151,7 +1166,6 @@ class SchedulerJob(BaseJob):
 
     @provide_session
     def _execute_task_instances(self,
-                                simple_dag_bag,
                                 states,
                                 session=None):
         """
@@ -1170,7 +1184,7 @@ class SchedulerJob(BaseJob):
         :type states: tuple[airflow.utils.state.State]
         :return: Number of task instance with state changed.
         """
-        executable_tis = self._find_executable_task_instances(simple_dag_bag, states,
+        executable_tis = self._find_executable_task_instances(states,
                                                               session=session)
 
         def query(result, items):
@@ -1179,8 +1193,8 @@ class SchedulerJob(BaseJob):
                                                                  states,
                                                                  session=session)
             self._enqueue_task_instances_with_queued_state(
-                simple_dag_bag,
-                simple_tis_with_state_changed)
+                simple_tis_with_state_changed,
+                session)
             session.commit()
             return result + len(simple_tis_with_state_changed)
 
@@ -1267,14 +1281,14 @@ class SchedulerJob(BaseJob):
             self.manage_slas(dag)
 
     @provide_session
-    def _process_executor_events(self, simple_dag_bag, session=None):
+    def _process_executor_events(self, session=None):
         """
         Respond to executor events.
         """
         # TODO: this shares quite a lot of code with _manage_executor_state
 
         TI = models.TaskInstance
-        for key, state in list(self.executor.get_event_buffer(simple_dag_bag.dag_ids)
+        for key, state in list(self.executor.get_event_buffer()
                                    .items()):
             dag_id, task_id, execution_date, try_number = key
             self.log.info(
@@ -1298,9 +1312,11 @@ class SchedulerJob(BaseJob):
                            "killed externally?".format(ti, state, ti.state))
                     self.log.error(msg)
                     try:
-                        simple_dag = simple_dag_bag.get_dag(dag_id)
-                        dagbag = models.DagBag(simple_dag.full_filepath)
-                        dag = dagbag.get_dag(dag_id)
+                        # simple_dag = simple_dag_bag.get_dag(dag_id)
+                        # dagbag = models.DagBag(simple_dag.full_filepath)
+                        # dag = dagbag.get_dag(dag_id)
+
+                        dag = self._get_dag(dag_id, session)
                         ti.task = dag.get_task(task_id)
                         ti.handle_failure(msg)
                     except Exception:
@@ -1392,30 +1408,15 @@ class SchedulerJob(BaseJob):
             self.log.debug("Starting Loop...")
             loop_start_time = time.time()
 
-            if self.using_sqlite:
-                self.processor_agent.heartbeat()
-                # For the sqlite case w/ 1 thread, wait until the processor
-                # is finished to avoid concurrent access to the DB.
-                self.log.debug(
-                    "Waiting for processors to finish since we're using sqlite")
-                self.processor_agent.wait_until_finished()
+            # recieve and process message from manager
+            self.processor_agent.harvest_message()
 
-            self.log.debug("Harvesting DAG parsing results")
-            simple_dags = self.processor_agent.harvest_simple_dags()
-            self.log.debug("Harvested {} SimpleDAGs".format(len(simple_dags)))
-
-            # Send tasks for execution if available
-            simple_dag_bag = SimpleDagBag(simple_dags)
-            if len(simple_dags) > 0:
-                try:
-                    simple_dag_bag = SimpleDagBag(simple_dags)
-
-                    self._execute_task_instances(simple_dag_bag,
-                                                 (State.SCHEDULED,))
-                except Exception as e:
-                    self.log.error("Error queuing tasks")
-                    self.log.exception(e)
-                    continue
+            try:
+                self._execute_task_instances((State.SCHEDULED,))
+            except Exception as e:
+                self.log.error("Error queuing tasks")
+                self.log.exception(e)
+                continue
 
             # Call heartbeats
             self.log.debug("Heartbeating the executor")
@@ -1424,7 +1425,7 @@ class SchedulerJob(BaseJob):
             self._change_state_for_tasks_failed_to_execute()
 
             # Process events from the executor
-            self._process_executor_events(simple_dag_bag)
+            self._process_executor_events()
 
             # Heartbeat the scheduler periodically
             time_since_last_heartbeat = (timezone.utcnow() -
@@ -1502,7 +1503,7 @@ class SchedulerJob(BaseJob):
         """
         self.log.info("Processing file %s for tasks to queue", file_path)
         # As DAGs are parsed from this file, they will be converted into SimpleDags
-        simple_dags = []
+        dags = []
 
         try:
             dagbag = models.DagBag(file_path, include_examples=False)
@@ -1530,10 +1531,9 @@ class SchedulerJob(BaseJob):
             # Only return DAGs that are not paused
             if dag_id not in paused_dag_ids:
                 dag = dagbag.get_dag(dag_id)
-                pickle_id = None
                 if pickle_dags:
-                    pickle_id = dag.pickle(file_changed, session).id
-                simple_dags.append(SimpleDag(dag, pickle_id=pickle_id))
+                    dag.pickle(file_changed, session)
+                dags.append(dag)
 
         if len(self.dag_ids) > 0:
             dags = [dag for dag in dagbag.dags.values()
@@ -1591,7 +1591,7 @@ class SchedulerJob(BaseJob):
         except Exception:
             self.log.exception("Error killing zombies!")
 
-        return simple_dags
+        return dags
 
     @provide_session
     def heartbeat_callback(self, session=None):
