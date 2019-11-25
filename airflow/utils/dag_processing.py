@@ -1181,6 +1181,7 @@ class DagFileProcessorManager(LoggingMixin):
                 else:
                     self._file_last_changed[file_path] = file_last_changed_on_disk
                     file_changed = True
+                    self.log.debug("File %s has changed.", file_path)
 
                 file_content = {}
                 file_name = os.path.split(file_path)[-1]
@@ -1200,7 +1201,7 @@ class DagFileProcessorManager(LoggingMixin):
 
     def _success(self, file_path):
         self.log.debug(
-            "Path %s process successfully.", file_path)
+            "File %s process successfully.", file_path)
         now = timezone.utcnow()
         self._last_finish_time[file_path] = now
         runtime = (now - self._start_time.get(file_path, now)).total_seconds()
@@ -1216,7 +1217,7 @@ class DagFileProcessorManager(LoggingMixin):
 
     def _fail(self, file_path):
         self.log.warning(
-            "Path %s process failed.", file_path)
+            "File %s process failed.", file_path)
 
         if file_path in self._processors:
             self._processors.pop(file_path)
@@ -1268,10 +1269,8 @@ class DagFileProcessorManager(LoggingMixin):
             file_path, state = file_and_state
             try:
                 if state == celery_states.SUCCESS:
-                    self.log.debug("File %s parses successfully.", file_path)
                     self._success(file_path)
                 elif state == celery_states.FAILURE or state == celery_states.REVOKED:
-                    self.log.debug("File %s parses failed.", file_path)
                     self._fail(file_path)
             except Exception:
                 self.log.exception("Error syncing the Celery executor, ignoring it.")

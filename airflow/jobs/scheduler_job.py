@@ -25,6 +25,7 @@ from __future__ import unicode_literals
 import logging
 import multiprocessing
 import os
+import pickle
 import signal
 import sys
 import threading
@@ -923,13 +924,8 @@ class SchedulerJob(BaseJob):
             self.log.debug("No tasks to consider for execution.")
             return executable_tis
 
-        # Put one task instance on each line
-        task_instance_str = "\n\t".join(
-            [repr(x) for x in task_instances_to_examine])
-        self.log.info(
-            "%s tasks up for execution:\n\t%s", len(task_instances_to_examine),
-            task_instance_str
-        )
+        self.log.info("%s tasks up for execution.",
+                      len(task_instances_to_examine))
 
         # Get the pool settings
         pools = {p.pool: p for p in session.query(models.Pool).all()}
@@ -1137,6 +1133,10 @@ class SchedulerJob(BaseJob):
         # actually enqueue them
         for simple_task_instance in simple_task_instances:
             dag = self._get_dag(simple_task_instance.dag_id, session)
+            if dag is None:
+                self.log.debug("Task %s's dag %s hasn't pickled.",
+                               simple_task_instance.key, simple_task_instance.dag_id)
+                continue
             command = TI.generate_command(
                 simple_task_instance.dag_id,
                 simple_task_instance.task_id,
@@ -1312,10 +1312,6 @@ class SchedulerJob(BaseJob):
                            "killed externally?".format(ti, state, ti.state))
                     self.log.error(msg)
                     try:
-                        # simple_dag = simple_dag_bag.get_dag(dag_id)
-                        # dagbag = models.DagBag(simple_dag.full_filepath)
-                        # dag = dagbag.get_dag(dag_id)
-
                         dag = self._get_dag(dag_id, session)
                         ti.task = dag.get_task(task_id)
                         ti.handle_failure(msg)
@@ -1442,10 +1438,6 @@ class SchedulerJob(BaseJob):
                 "Ran scheduling loop in %.2f seconds",
                 loop_duration)
 
-            if not is_unit_test:
-                self.log.debug("Sleeping for %.2f seconds", self._processor_poll_interval)
-                time.sleep(self._processor_poll_interval)
-
             if self.processor_agent.done:
                 self.log.info("Exiting scheduler loop as all files"
                               " have been processed {} times".format(self.num_runs))
@@ -1475,8 +1467,21 @@ class SchedulerJob(BaseJob):
 
         settings.Session.remove()
 
+    def _get_file_dagbag(self, file_path, dagbag_path):
+        try:
+            self.log.debug("Loaded dagbag of %s by parsing, and save to %s.",
+                           file_path, dagbag_path)
+            dagbag =  models.DagBag(file_path, include_examples=False)
+            with open(dagbag_path, 'wb', encoding='utf-8') as file:
+                file.write(pickle.dumps(dagbag))
+            return dagbag
+        except Exception:
+            self.log.exception("Failed at reloading the DAG file %s", file_path)
+            Stats.incr('dag_file_refresh_error', 1, 1)
+            return None
+
     @provide_session
-    def process_file(self, file_path, file_changed=False, pickle_dags=False, session=None):
+    def process_file(self, file_path, dagbag_path, file_changed=False, pickle_dags=False, session=None):
         """
         Process a Python file containing Airflow DAGs.
 
@@ -1505,11 +1510,24 @@ class SchedulerJob(BaseJob):
         # As DAGs are parsed from this file, they will be converted into SimpleDags
         dags = []
 
-        try:
-            dagbag = models.DagBag(file_path, include_examples=False)
-        except Exception:
-            self.log.exception("Failed at reloading the DAG file %s", file_path)
-            Stats.incr('dag_file_refresh_error', 1, 1)
+        if not file_changed and os.path.isfile(dagbag_path):
+            try:
+                self.log.debug("Loaded dagbag of %s by %s.",
+                               file_path, dagbag_path)
+                with open(dagbag_path, 'rb', encoding='utf-8') as file:
+                    dagbag = pickle.loads(file.read())
+            except Exception as e:
+                self.log.error("Dagbag File %s is unavailable, exception:\n%s",
+                               dagbag_path, e)
+
+            if not isinstance(dagbag, models.DagBag):
+                self.log.warning("Dagbag File %s can't de-pickle to dagbag object.", dagbag_path)
+                dagbag = self._get_file_dagbag(file_path, dagbag_path)
+        else:
+            dagbag = self._get_file_dagbag(file_path, dagbag_path)
+
+        if not isinstance(dagbag, models.DagBag):
+            self.log.error("Can't get dagbag instance of %s.", file_path)
             return []
 
         if len(dagbag.dags) > 0:
