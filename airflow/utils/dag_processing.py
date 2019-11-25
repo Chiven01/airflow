@@ -62,7 +62,7 @@ from airflow.utils.helpers import reap_process_group
 from airflow.utils.db import provide_session
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow import configuration
-from airflow.utils.svn import svnclient
+#from airflow.utils.svn import svnclient
 from airflow.utils.timeout import timeout
 
 if six.PY2:
@@ -946,8 +946,8 @@ class DagFileProcessorManager(LoggingMixin):
                                       self.last_dag_dir_refresh_time).total_seconds()
         if elapsed_time_since_refresh > self.dag_dir_list_interval:
             # Update dags
-            svnclient.update(self._dag_directory)
-            self.log.info("Update files in {}".format(self._dag_directory))
+            #svnclient.update(self._dag_directory)
+            #self.log.info("Update files in {}".format(self._dag_directory))
 
             # Build up a list of Python files that could contain DAGs
             self.log.info("Searching for files in %s", self._dag_directory)
@@ -1340,8 +1340,7 @@ class DagFileProcessorManager(LoggingMixin):
                     self.log.warning("File %s not exist in _task_args, this shouldn't happend.", file_path)
 
             if task_tuples_to_send:
-                tasks = [t[-1] for t in task_tuples_to_send]
-                cache_result_backend = tasks[0]
+                cache_result_backend = task_tuples_to_send[0][-1].backend
 
                 chunksize = self._num_tasks_per_send_process(len(task_tuples_to_send))
                 num_processor = min(len(task_tuples_to_send), self._sync_parallelism)
