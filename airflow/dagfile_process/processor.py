@@ -51,7 +51,7 @@ def file_processor(do_pickle, dag_ids, file_changed, dag_contents):
             dagbag_path = os.path.join(dagbag_folder, ''.join([mod_name, '.dagbag']))
             log.debug("Getting dagbag file %s", dagbag_path)
     else:
-        log.error("args.dag_contents is not dict")
+        log.error("Args.dag_contents is not dict")
         return
 
     from airflow import jobs, settings

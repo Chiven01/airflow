@@ -42,7 +42,7 @@ from collections import namedtuple
 from importlib import import_module
 import enum
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import psutil
 from setproctitle import setproctitle
@@ -255,43 +255,65 @@ class SimpleTaskInstance(object):
         return ti
 
 
-class SimpleDagBag(BaseDagBag):
+class SimpleDagBag(BaseDagBag, LoggingMixin):
     """
-    A collection of SimpleDag objects with some convenience methods.
+    Simplify a DagBag instance.
     """
 
-    def __init__(self, simple_dags):
+    def __init__(self, dagbag):
         """
         Constructor.
 
-        :param simple_dags: SimpleDag objects that should be in this
-        :type list(airflow.utils.dag_processing.SimpleDagBag)
+        :param dagbag:
         """
-        self.simple_dags = simple_dags
-        self.dag_id_to_simple_dag = {}
+        self.dags = dagbag.dags
+        self.file_last_changed = dagbag.file_last_changed
+        self.import_errors = dagbag.import_errors
 
-        for simple_dag in simple_dags:
-            self.dag_id_to_simple_dag[simple_dag.dag_id] = simple_dag
+    @provide_session
+    def kill_zombies(self, session=None):
+        """
+        Fail zombie tasks, which are tasks that haven't
+        had a heartbeat for too long, in the current DagBag.
 
-    @property
-    def dag_ids(self):
+        :param session: DB session.
+        :type session: sqlalchemy.orm.session.Session
         """
-        :return: IDs of all the DAGs in this
-        :rtype: list[unicode]
-        """
-        return self.dag_id_to_simple_dag.keys()
+        # Avoid circular import
+        from sqlalchemy import or_
+        from airflow.utils.state import State
+        from airflow.models.taskinstance import TaskInstance as TI
+        from airflow.jobs import LocalTaskJob as LJ
 
-    def get_dag(self, dag_id):
-        """
-        :param dag_id: DAG ID
-        :type dag_id: unicode
-        :return: if the given DAG ID exists in the bag, return the BaseDag
-        corresponding to that ID. Otherwise, throw an Exception
-        :rtype: airflow.utils.dag_processing.SimpleDag
-        """
-        if dag_id not in self.dag_id_to_simple_dag:
-            raise AirflowException("Unknown DAG ID {}".format(dag_id))
-        return self.dag_id_to_simple_dag[dag_id]
+        # How many seconds do we wait for tasks to heartbeat before mark them as zombies.
+        zombie_threshold_secs = (
+            configuration.getint('scheduler', 'scheduler_zombie_task_threshold'))
+        limit_dttm = timezone.utcnow() - timedelta(
+            seconds=zombie_threshold_secs)
+        self.log.debug("Failing jobs without heartbeat after %s", limit_dttm)
+
+        tis = (
+            session.query(TI)
+                .join(LJ, TI.job_id == LJ.id)
+                .filter(TI.state == State.RUNNING)
+                .filter(TI.dag_id.in_(self.dags))
+                .filter(
+                or_(
+                    LJ.state != State.RUNNING,
+                    LJ.latest_heartbeat < limit_dttm,
+                )
+            ).all()
+        )
+        for ti in tis:
+            self.log.info("Detected zombie job with dag_id %s, task_id %s, and execution date %s",
+                          ti.dag_id, ti.task_id, ti.execution_date.isoformat())
+            ti.test_mode = configuration.getboolean('core', 'unit_test_mode')
+            ti.task = self.dags[ti.dag_id].get_task(ti.task_id)
+            ti.handle_failure("{} detected as zombie".format(ti),
+                              ti.test_mode, ti.get_template_context())
+            self.log.info('Marked zombie job %s as %s', ti, ti.state)
+            Stats.incr('zombies_killed')
+        session.commit()
 
 class ExceptionWithTraceback(object):
 

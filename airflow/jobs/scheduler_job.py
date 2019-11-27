@@ -49,10 +49,8 @@ from airflow.ti_deps.dep_context import DepContext, QUEUE_DEPS
 from airflow.utils import asciiart, helpers, timezone
 from airflow.utils.dag_processing import (AbstractDagFileProcessor,
                                           DagFileProcessorAgent,
-                                          SimpleDag,
-                                          SimpleDagBag,
                                           SimpleTaskInstance,
-                                          list_py_file_paths)
+                                          list_py_file_paths, SimpleDagBag)
 from airflow.utils.db import provide_session
 from airflow.utils.email import get_email_address_list, send_email
 from airflow.utils.log.logging_mixin import LoggingMixin, StreamLogWriter, set_context
@@ -558,7 +556,7 @@ class SchedulerJob(BaseJob):
             session.commit()
 
     @staticmethod
-    def update_import_errors(session, dagbag):
+    def update_import_errors(session, simple_dagbag):
         """
         For the DAGs in the given DagBag, record any associated import errors and clears
         errors for files that no longer have them. These are usually displayed through the
@@ -566,23 +564,23 @@ class SchedulerJob(BaseJob):
 
         :param session: session for ORM operations
         :type session: sqlalchemy.orm.session.Session
-        :param dagbag: DagBag containing DAGs with import errors
-        :type dagbag: airflow.models.DagBag
+        :param simple_dagbag: DagBag containing DAGs with import errors
+        :type simple_dagbag: airflow.models.DagBag
         """
         # Clear the errors of the processed files
-        for dagbag_file in dagbag.file_last_changed:
+        for dagbag_file in simple_dagbag.file_last_changed:
             session.query(errors.ImportError).filter(
                 errors.ImportError.filename == dagbag_file
             ).delete()
 
         # Add the errors of the processed files
-        for filename, stacktrace in six.iteritems(dagbag.import_errors):
+        for filename, stacktrace in six.iteritems(simple_dagbag.import_errors):
             session.add(errors.ImportError(
                 filename=filename,
                 stacktrace=stacktrace))
         session.commit()
 
-        Stats.gauge('scheduler.dagbag.errors', len(dagbag.import_errors))
+        Stats.gauge('scheduler.dagbag.errors', len(simple_dagbag.import_errors))
 
     @provide_session
     def create_dag_run(self, dag, session=None):
@@ -1472,8 +1470,9 @@ class SchedulerJob(BaseJob):
             self.log.debug("Loaded dagbag of %s by parsing, and save to %s.",
                            file_path, dagbag_path)
             dagbag =  models.DagBag(file_path, include_examples=False)
-            with open(dagbag_path, 'wb', encoding='utf-8') as file:
-                file.write(pickle.dumps(dagbag))
+            simple_dagbag = SimpleDagBag(dagbag)
+            with open(dagbag_path, 'wb') as file:
+                file.write(pickle.dumps(simple_dagbag))
             return dagbag
         except Exception:
             self.log.exception("Failed at reloading the DAG file %s", file_path)
@@ -1510,55 +1509,56 @@ class SchedulerJob(BaseJob):
         # As DAGs are parsed from this file, they will be converted into SimpleDags
         dags = []
 
+        simple_dagbag = None
         if not file_changed and os.path.isfile(dagbag_path):
             try:
                 self.log.debug("Loaded dagbag of %s by %s.",
                                file_path, dagbag_path)
-                with open(dagbag_path, 'rb', encoding='utf-8') as file:
-                    dagbag = pickle.loads(file.read())
+                with open(dagbag_path, 'rb') as file:
+                    simple_dagbag = pickle.loads(file.read())
             except Exception as e:
                 self.log.error("Dagbag File %s is unavailable, exception:\n%s",
                                dagbag_path, e)
 
-            if not isinstance(dagbag, models.DagBag):
-                self.log.warning("Dagbag File %s can't de-pickle to dagbag object.", dagbag_path)
-                dagbag = self._get_file_dagbag(file_path, dagbag_path)
+            if not isinstance(simple_dagbag, SimpleDagBag):
+                self.log.warning("Dagbag File %s can't be de-pickled to dagbag object.", dagbag_path)
+                simple_dagbag = self._get_file_dagbag(file_path, dagbag_path)
         else:
-            dagbag = self._get_file_dagbag(file_path, dagbag_path)
+            simple_dagbag = self._get_file_dagbag(file_path, dagbag_path)
 
-        if not isinstance(dagbag, models.DagBag):
+        if not isinstance(simple_dagbag, models.DagBag):
             self.log.error("Can't get dagbag instance of %s.", file_path)
             return []
 
-        if len(dagbag.dags) > 0:
-            self.log.info("DAG(s) %s retrieved from %s", dagbag.dags.keys(), file_path)
+        if len(simple_dagbag.dags) > 0:
+            self.log.info("DAG(s) %s retrieved from %s", simple_dagbag.dags.keys(), file_path)
         else:
             self.log.warning("No viable dags retrieved from %s", file_path)
-            self.update_import_errors(session, dagbag)
+            self.update_import_errors(session, simple_dagbag)
             return []
 
         # Save individual DAGs in the ORM and update DagModel.last_scheduled_time
-        for dag in dagbag.dags.values():
+        for dag in simple_dagbag.dags.values():
             dag.sync_to_db()
 
-        paused_dag_ids = [dag.dag_id for dag in dagbag.dags.values()
+        paused_dag_ids = [dag.dag_id for dag in simple_dagbag.dags.values()
                           if dag.is_paused]
 
         # Pickle the DAGs (if necessary) and put them into a SimpleDag
-        for dag_id in dagbag.dags:
+        for dag_id in simple_dagbag.dags:
             # Only return DAGs that are not paused
             if dag_id not in paused_dag_ids:
-                dag = dagbag.get_dag(dag_id)
+                dag = simple_dagbag.dags.get(dag_id)
                 if pickle_dags:
                     dag.pickle(file_changed, session)
                 dags.append(dag)
 
         if len(self.dag_ids) > 0:
-            dags = [dag for dag in dagbag.dags.values()
+            dags = [dag for dag in simple_dagbag.dags.values()
                     if dag.dag_id in self.dag_ids and
                     dag.dag_id not in paused_dag_ids]
         else:
-            dags = [dag for dag in dagbag.dags.values()
+            dags = [dag for dag in simple_dagbag.dags.values()
                     if not dag.parent_dag and
                     dag.dag_id not in paused_dag_ids]
 
@@ -1567,10 +1567,10 @@ class SchedulerJob(BaseJob):
         # returns true as described in https://bugs.python.org/issue23582 )
         ti_keys_to_schedule = []
 
-        self._process_dags(dagbag, dags, ti_keys_to_schedule)
+        self._process_dags(simple_dagbag, dags, ti_keys_to_schedule)
 
         for ti_key in ti_keys_to_schedule:
-            dag = dagbag.dags[ti_key[0]]
+            dag = simple_dagbag.dags[ti_key[0]]
             task = dag.get_task(ti_key[1])
             ti = models.TaskInstance(task, ti_key[2])
 
@@ -1601,11 +1601,11 @@ class SchedulerJob(BaseJob):
 
         # Record import errors into the ORM
         try:
-            self.update_import_errors(session, dagbag)
+            self.update_import_errors(session, simple_dagbag)
         except Exception:
             self.log.exception("Error logging import errors!")
         try:
-            dagbag.kill_zombies()
+            simple_dagbag.kill_zombies()
         except Exception:
             self.log.exception("Error killing zombies!")
 
