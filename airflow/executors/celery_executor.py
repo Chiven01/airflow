@@ -24,7 +24,7 @@ import time
 import traceback
 from multiprocessing import Pool, cpu_count
 
-from celery import Celery
+from celery import Celery, platforms
 from celery import states as celery_states
 
 from airflow import configuration
@@ -55,6 +55,8 @@ else:
 app = Celery(
     configuration.conf.get('celery', 'CELERY_APP_NAME'),
     config_source=celery_configuration)
+
+platforms.C_FORCE_ROOT = True
 
 
 @app.task
