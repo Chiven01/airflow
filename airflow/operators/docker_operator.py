@@ -159,7 +159,7 @@ class DockerOperator(BaseOperator):
             **kwargs):
 
         super(DockerOperator, self).__init__(*args, **kwargs)
-        self.api_version = '1.39'
+        self.api_version = '1.38'
         self.auto_remove = True
         self.bash_command = bash_command
         self.cpus = cpus
