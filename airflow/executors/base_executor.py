@@ -156,7 +156,7 @@ class BaseExecutor(LoggingMixin):
                                executor_config=simple_ti.executor_config)
 
     def change_state(self, key, state):
-        self.log.debug("Changing state: %s", key)
+        self.log.debug("Changing state: %s, state = %s.", key, state)
         self.running.pop(key, None)
         self.event_buffer[key] = state
 

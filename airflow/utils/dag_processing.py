@@ -343,7 +343,7 @@ def fetch_task_state(celery_task):
     except Exception as e:
         exception_traceback = "Celery Task ID: {}\n{}".format(celery_task[0],
                                                               traceback.format_exc())
-        res = ExceptionWithTraceback(e, exception_traceback)
+        res = (celery_task[0], ExceptionWithTraceback(e, exception_traceback))
     return res
 
 def correct_maybe_zipped(fileloc):
@@ -946,6 +946,10 @@ class DagFileProcessorManager(LoggingMixin):
                                               max_runs_reached,
                                               all_files_processed,
                                               )
+            # todo(chiven): sometimes, it will block for tens of seconds(usually, around 30s),
+            #  data size is about 0.07 KB, and it's so small, So maybe the channel that is used
+            #  to communication with scheduler is blocking.
+            #self.log.debug("Sending stat data, data size = %0.2f KB.", sys.getsizeof(dag_parsing_stat)/1024)
             self._signal_conn.send(dag_parsing_stat)
 
             if max_runs_reached:
@@ -955,6 +959,8 @@ class DagFileProcessorManager(LoggingMixin):
 
             if self._async_mode:
                 loop_duration = time.time() - loop_start_time
+                self.log.debug(
+                    "Ran manager loop in %.2f seconds", loop_duration)
                 if loop_duration < 1:
                     poll_time = 1 - loop_duration
                 else:
@@ -1230,6 +1236,12 @@ class DagFileProcessorManager(LoggingMixin):
         self._last_runtime[file_path] = runtime
         self._run_count[file_path] += 1
 
+        # file has been processed successfully, so set file_changed = False
+        pickle_dags, dag_ids, file_changed, \
+        file_content, fp, file_processor = self._task_args[file_path]
+        if file_changed is True:
+            self._task_args[file_path] = [pickle_dags, dag_ids, False, file_content, fp, file_processor]
+
         if file_path in self._processors:
             self._processors.pop(file_path)
         else:
@@ -1282,18 +1294,22 @@ class DagFileProcessorManager(LoggingMixin):
         send_pool.join()
         self.log.debug("Inquiries completed.")
 
-        for file_and_state in file_to_states:
-            if isinstance(file_and_state, ExceptionWithTraceback):
+        for file_path, state in file_to_states:
+            if isinstance(state, ExceptionWithTraceback):
                 self.log.error(
                     "Error fetching Celery task state, ignoring it:%s\n%s\n",
-                    repr(file_and_state.exception), file_and_state.traceback)
+                    repr(state.exception), state.traceback)
+                self._fail(file_path)
                 continue
-            file_path, state = file_and_state
             try:
                 if state == celery_states.SUCCESS:
                     self._success(file_path)
                 elif state == celery_states.FAILURE or state == celery_states.REVOKED:
                     self._fail(file_path)
+                elif state == celery_states.PENDING:
+                    self.log.debug("Waiting for completed, State: %s, File_path: %s.", state, file_path)
+                else:
+                    self.log.warning("Unexpected state: %s, File_path: %s.", state, file_path)
             except Exception:
                 self.log.exception("Error syncing the Celery executor, ignoring it.")
 

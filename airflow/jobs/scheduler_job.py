@@ -866,6 +866,7 @@ class SchedulerJob(BaseJob):
         pickle_id = (session.query(DM).filter(DM.dag_id == dag_id).first()).pickle_id
         if pickle_id:
             dag = (session.query(DP).filter(DP.id == pickle_id).first()).pickle
+            dag.pickle_id = pickle_id
             return dag
         else:
             return None
@@ -1255,7 +1256,7 @@ class SchedulerJob(BaseJob):
         :rtype: None
         """
         for dag in dags:
-            dag = dagbag.get_dag(dag.dag_id)
+            dag = dagbag.dags.get(dag.dag_id)
             if not dag:
                 self.log.error("DAG ID %s was not found in the DagBag", dag.dag_id)
                 continue
@@ -1473,7 +1474,7 @@ class SchedulerJob(BaseJob):
             simple_dagbag = SimpleDagBag(dagbag)
             with open(dagbag_path, 'wb') as file:
                 file.write(pickle.dumps(simple_dagbag))
-            return dagbag
+            return simple_dagbag
         except Exception:
             self.log.exception("Failed at reloading the DAG file %s", file_path)
             Stats.incr('dag_file_refresh_error', 1, 1)
@@ -1526,7 +1527,7 @@ class SchedulerJob(BaseJob):
         else:
             simple_dagbag = self._get_file_dagbag(file_path, dagbag_path)
 
-        if not isinstance(simple_dagbag, models.DagBag):
+        if not isinstance(simple_dagbag, SimpleDagBag):
             self.log.error("Can't get dagbag instance of %s.", file_path)
             return []
 

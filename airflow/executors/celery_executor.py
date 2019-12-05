@@ -280,10 +280,10 @@ class CeleryExecutor(BaseExecutor):
                         del self.tasks[key]
                         del self.last_state[key]
                     else:
-                        self.log.info("Unexpected state: %s", state)
+                        self.log.info("Key: %s, Unexpected state: %s.", key, state)
                         self.last_state[key] = state
             except Exception:
-                self.log.exception("Error syncing the Celery executor, ignoring it.")
+                self.log.exception("Key: %s, Error syncing the Celery executor, ignoring it.", key)
 
     def end(self, synchronous=False):
         if synchronous:
