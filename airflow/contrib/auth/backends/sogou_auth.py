@@ -109,7 +109,7 @@ def load_user(userid, session=None):
     if not userid or userid == 'None':
         return None
 
-    user = session.query(models.User).filter(models.User.id == int(userid)).first()
+    user = session.query(models.User).filter(models.User.id == userid).first()
     return SogouUser(user)
 
 
