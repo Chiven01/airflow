@@ -30,6 +30,7 @@ from airflow.utils.decorators import apply_defaults
 from airflow.utils.file import TemporaryDirectory
 from airflow.utils.svn import svnclient
 from airflow.configuration import AIRFLOW_TMP, AIRFLOW_SVN, HADOOP_CONF_PATH, HIVE_CONF_PATH, SPARK_CONF_PATH, HIVE_CONF_URL, HADOOP_CONF_URL, UGI_URL, SPARK_CONF_ORIGIN, DEFAULT_IMAGE, EXTRA_HOSTS
+from airflow import configuration as conf
 from docker import APIClient, tls
 import ast
 
@@ -388,14 +389,19 @@ class DockerOperator(BaseOperator):
                 # 添加映射路径
                 volumes.append(spark_conf_path + ":" + SPARK_CONF_PATH + self.env['HIVE_CONF_DIR'])
                 local_env["SPARK_CONF_DIR"] = SPARK_CONF_PATH + self.env['HIVE_CONF_DIR']
+            # 添加mysql conf 映射
+            volumes.append('/etc/my.cnf' + ":" + '/etc/my.cnf' )
 
+            #设置时区环境变量
+            local_env["TZ"] = conf.get("core","default_timezone")
+            bash_command = "/bin/bash -c '" + self.bash_command + "'"
             self.log.info("%s", volumes)
             self.log.info("%s", local_env)
-            self.log.info("%s", self.bash_command)
+            self.log.info("%s", bash_command)
 
             
             self.container = self.cli.create_container(
-                command=self.bash_command,
+                command=bash_command,
                 environment=local_env,
                 host_config=self.cli.create_host_config(
                     auto_remove=self.auto_remove,
