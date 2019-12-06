@@ -40,7 +40,7 @@ class KnownEvent(Base):
     label = Column(String(200))
     start_date = Column(UtcDateTime)
     end_date = Column(UtcDateTime)
-    user_id = Column(Integer(), ForeignKey('users.id'),)
+    user_id = Column(String(10), ForeignKey('users.id'),)
     known_event_type_id = Column(Integer(), ForeignKey('known_event_type.id'),)
     reported_by = relationship(
         "User", cascade=False, cascade_backrefs=False, backref='known_events')

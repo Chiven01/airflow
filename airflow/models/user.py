@@ -25,7 +25,7 @@ from airflow.models.base import Base, ID_LEN
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(String(10), primary_key=True)
     username = Column(String(ID_LEN), unique=True)
     email = Column(String(500))
     superuser = Column(Boolean(), default=False)

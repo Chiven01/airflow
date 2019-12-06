@@ -39,6 +39,6 @@ class ProductOwner(Base):
     __tablename__ = "product_owner"
     __table_args__ = (PrimaryKeyConstraint('owner','product'),)
 
-    owner = Column(Integer,ForeignKey('users.id'))
+    owner = Column(String(10),ForeignKey('users.id'))
     product = Column(String(500),ForeignKey('products.productname'))
 

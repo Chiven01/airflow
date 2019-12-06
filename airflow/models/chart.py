@@ -31,7 +31,7 @@ class Chart(Base):
     id = Column(Integer, primary_key=True)
     label = Column(String(200))
     conn_id = Column(String(ID_LEN), nullable=False)
-    user_id = Column(Integer(), ForeignKey('users.id'), nullable=True)
+    user_id = Column(String(10), ForeignKey('users.id'), nullable=True)
     chart_type = Column(String(100), default="line")
     sql_layout = Column(String(50), default="series")
     sql = Column(Text, default="SELECT series, x, y FROM table")
