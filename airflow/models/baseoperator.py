@@ -299,17 +299,17 @@ class BaseOperator(LoggingMixin):
         **kwargs
     ):
 
-        if args or kwargs:
-            # TODO remove *args and **kwargs in Airflow 2.0
-            warnings.warn(
-                'Invalid arguments were passed to {c} (task_id: {t}). '
-                'Support for passing such arguments will be dropped in '
-                'Airflow 2.0. Invalid arguments were:'
-                '\n*args: {a}\n**kwargs: {k}'.format(
-                    c=self.__class__.__name__, a=args, k=kwargs, t=task_id),
-                category=PendingDeprecationWarning,
-                stacklevel=3
-            )
+        #if args or kwargs:
+        #    # TODO remove *args and **kwargs in Airflow 2.0
+        #    warnings.warn(
+        #        'Invalid arguments were passed to {c} (task_id: {t}). '
+        #        'Support for passing such arguments will be dropped in '
+        #        'Airflow 2.0. Invalid arguments were:'
+        #        '\n*args: {a}\n**kwargs: {k}'.format(
+        #            c=self.__class__.__name__, a=args, k=kwargs, t=task_id),
+        #        category=PendingDeprecationWarning,
+        #        stacklevel=3
+        #    )
         validate_key(task_id)
         self.task_id = task_id
         self.owner = owner
@@ -340,13 +340,13 @@ class BaseOperator(LoggingMixin):
         if wait_for_downstream:
             self.depends_on_past = True
 
-        if schedule_interval:
-            self.log.warning(
-                "schedule_interval is used for %s, though it has "
-                "been deprecated as a task parameter, you need to "
-                "specify it as a DAG parameter instead",
-                self
-            )
+        #if schedule_interval:
+        #    self.log.warning(
+        #        "schedule_interval is used for %s, though it has "
+        #        "been deprecated as a task parameter, you need to "
+        #        "specify it as a DAG parameter instead",
+        #        self
+        #    )
         self._schedule_interval = schedule_interval
         self.retries = retries
         self.queue = queue
