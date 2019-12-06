@@ -183,7 +183,7 @@ def upgrade():
     op.create_index('ti_state', 'task_instance', ['state'], unique=False)
     op.create_index('ti_state_lkp', 'task_instance', ['dag_id', 'task_id', 'execution_date', 'state'], unique=False)
     op.create_table('users',
-    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.String(length=10), nullable=False),
     sa.Column('username', sa.String(length=250), nullable=True),
     sa.Column('email', sa.String(length=500), nullable=True),
     sa.Column('superuser', sa.Boolean(), nullable=True),
@@ -213,7 +213,7 @@ def upgrade():
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('label', sa.String(length=200), nullable=True),
     sa.Column('conn_id', sa.String(length=250), nullable=False),
-    sa.Column('user_id', sa.Integer(), nullable=True),
+    sa.Column('user_id', sa.String(length=10), nullable=True),
     sa.Column('chart_type', sa.String(length=100), nullable=True),
     sa.Column('sql_layout', sa.String(length=50), nullable=True),
     sa.Column('sql', sa.Text(), nullable=True),
@@ -233,7 +233,7 @@ def upgrade():
     sa.Column('label', sa.String(length=200), nullable=True),
     sa.Column('start_date', aus.UtcDateTime(timezone=True), nullable=True),
     sa.Column('end_date', aus.UtcDateTime(timezone=True), nullable=True),
-    sa.Column('user_id', sa.Integer(), nullable=True),
+    sa.Column('user_id', sa.String(length=10), nullable=True),
     sa.Column('known_event_type_id', sa.Integer(), nullable=True),
     sa.Column('description', sa.Text(), nullable=True),
     sa.ForeignKeyConstraint(['known_event_type_id'], ['known_event_type.id'], ),
