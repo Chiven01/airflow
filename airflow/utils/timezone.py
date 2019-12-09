@@ -27,13 +27,13 @@ from airflow.settings import TIMEZONE
 utc = pendulum.timezone('UTC')
 from airflow import configuration as conf
 try:
-        tz = conf.get("core", "default_timezone")
-        if tz == "system":
-                utc = pendulum.local_timezone()
-        else:
-                utc = pendulum.timezone(tz)
+    tz = conf.get("core", "default_timezone")
+    if tz == "system":
+        utc = pendulum.local_timezone()
+    else:
+        utc = pendulum.timezone(tz)
 except Exception:
-
+    pass
 
 def is_localized(value):
     """
