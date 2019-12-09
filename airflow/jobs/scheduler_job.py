@@ -26,6 +26,7 @@ import logging
 import multiprocessing
 import os
 import pickle
+import dill
 import signal
 import sys
 import threading
@@ -44,6 +45,7 @@ from airflow import configuration as conf
 from airflow import executors, models, settings
 from airflow.exceptions import AirflowException
 from airflow.models import DagRun, SlaMiss, errors
+from airflow.models.dagpickle import SimpleDagBagPickle as SP
 from airflow.settings import Stats
 from airflow.ti_deps.dep_context import DepContext, QUEUE_DEPS
 from airflow.utils import asciiart, helpers, timezone
@@ -1466,22 +1468,33 @@ class SchedulerJob(BaseJob):
 
         settings.Session.remove()
 
-    def _get_file_dagbag(self, file_path, dagbag_path):
+    def _get_file_dagbag(self, file_path, session):
         try:
-            self.log.debug("Loaded dagbag of %s by parsing, and save to %s.",
-                           file_path, dagbag_path)
+            self.log.debug("Get Dagbag instance from %s.",file_path)
             dagbag =  models.DagBag(file_path, include_examples=False)
             simple_dagbag = SimpleDagBag(dagbag)
-            with open(dagbag_path, 'wb') as file:
-                file.write(pickle.dumps(simple_dagbag))
+
+            file_name = os.path.split(file_path)[-1]
+            orm_sp = session\
+                .query(SP)\
+                .filter(SP.file_name == file_name)\
+                .first()
+            if not orm_sp:
+                orm_sp = SP(file_name)
+                self.log.info("Creating ORM SimpleDagBagPickle for %s.", file_name)
+            orm_sp.pickle = simple_dagbag
+            orm_sp.upgrade_dttm = timezone.utcnow()
+            session.merge(orm_sp)
+            session.commit()
+
             return simple_dagbag
         except Exception:
-            self.log.exception("Failed at reloading the DAG file %s", file_path)
+            self.log.exception("Failed at loading the DAG file %s", file_path)
             Stats.incr('dag_file_refresh_error', 1, 1)
             return None
 
     @provide_session
-    def process_file(self, file_path, dagbag_path, file_changed=False, pickle_dags=False, session=None):
+    def process_file(self, file_path, file_changed=False, pickle_dags=False, session=None):
         """
         Process a Python file containing Airflow DAGs.
 
@@ -1510,25 +1523,28 @@ class SchedulerJob(BaseJob):
         # As DAGs are parsed from this file, they will be converted into SimpleDags
         dags = []
 
-        simple_dagbag = None
-        if not file_changed and os.path.isfile(dagbag_path):
-            try:
-                self.log.debug("Loaded dagbag of %s by %s.",
-                               file_path, dagbag_path)
-                with open(dagbag_path, 'rb') as file:
-                    simple_dagbag = pickle.loads(file.read())
-            except Exception as e:
-                self.log.error("Dagbag File %s is unavailable, exception:\n%s",
-                               dagbag_path, e)
+        file_name = os.path.split(file_path)[-1]
+        if not file_changed:
+            self.log.debug("Get %s's dagbag from DB.",
+                           file_path)
+            orm_simple_dagbag = session\
+                .query(SP)\
+                .filter(SP.file_name == file_name)\
+                .first()
 
-            if not isinstance(simple_dagbag, SimpleDagBag):
-                self.log.warning("Dagbag File %s can't be de-pickled to dagbag object.", dagbag_path)
-                simple_dagbag = self._get_file_dagbag(file_path, dagbag_path)
+            if orm_simple_dagbag is None or \
+                not isinstance(orm_simple_dagbag.pickle, SimpleDagBag):
+                self.log.warning("%s's pickle in DB is unavailable.",
+                                 file_path)
+                simple_dagbag = self._get_file_dagbag(file_path, session)
+            else:
+                simple_dagbag = orm_simple_dagbag.pickle
+
         else:
-            simple_dagbag = self._get_file_dagbag(file_path, dagbag_path)
+            simple_dagbag = self._get_file_dagbag(file_path, session)
 
         if not isinstance(simple_dagbag, SimpleDagBag):
-            self.log.error("Can't get dagbag instance of %s.", file_path)
+            self.log.error("Can't get DagBag instance of %s.", file_path)
             return []
 
         if len(simple_dagbag.dags) > 0:

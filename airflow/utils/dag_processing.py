@@ -54,7 +54,7 @@ from tabulate import tabulate
 import airflow.models
 from airflow import configuration as conf
 from airflow.dag.base_dag import BaseDag, BaseDagBag
-from airflow.exceptions import AirflowException
+from airflow.models.dagpickle import SimpleDagBagPickle as SP
 from airflow.settings import Stats
 from airflow.models import errors
 from airflow.utils import timezone
@@ -1183,15 +1183,6 @@ class DagFileProcessorManager(LoggingMixin):
 
         self._file_path_queue = [x for x in self._file_path_queue
                                  if x in new_file_paths]
-        # Stop processors that are working on deleted files
-        # filtered_processors = {}
-        # for file_path, processor in self._processors.items():
-        #     if file_path in new_file_paths:
-        #         filtered_processors[file_path] = processor
-        #     else:
-        #         self.log.warning("Stopping processor for %s", file_path)
-        #         processor.terminate()
-        # self._processors = filtered_processors
 
     def _set_file_contents(self, file_paths):
         if len(file_paths) == 0:
@@ -1227,7 +1218,8 @@ class DagFileProcessorManager(LoggingMixin):
         #         time.sleep(0.1)
         return
 
-    def _success(self, file_path):
+    @provide_session
+    def _success(self, file_path, session=None):
         self.log.debug(
             "File %s process successfully.", file_path)
         now = timezone.utcnow()
@@ -1237,16 +1229,30 @@ class DagFileProcessorManager(LoggingMixin):
         self._run_count[file_path] += 1
 
         # file has been processed successfully, so set file_changed = False
-        pickle_dags, dag_ids, file_changed, \
-        file_content, fp, file_processor = self._task_args[file_path]
+        _, _, file_changed, _, _, _ = self._task_args[file_path]
         if file_changed is True:
-            self._task_args[file_path] = [pickle_dags, dag_ids, False, file_content, fp, file_processor]
+            file_name = os.path.split(file_path)[-1]
+            orm_sp = session\
+                .query(SP)\
+                .filter(SP.file_name == file_name)\
+                .first()
+
+            if orm_sp \
+                    and (orm_sp.upgrade_dttm - self._file_last_changed[file_path]).total_seconds() > 0 \
+                    and isinstance(orm_sp.pickle, SimpleDagBag):
+                self.log.info("Success! file %s has been upgraded "
+                              "in table simple_dagbag_pickle.", file_path)
+                file_changed = False
+                self._task_args[file_path][2] = file_changed
+            else:
+                self.log.warning("Fail! when file %s was upgraded "
+                                 "in table simple_dagbag_pickle. And try again.", file_path)
 
         if file_path in self._processors:
             self._processors.pop(file_path)
         else:
             self.log.warning(
-                "Path %s not in self._processors, this shouldn't happend.",
+                "File %s not in self._processors, this shouldn't happend.",
                 file_path)
 
     def _fail(self, file_path):
@@ -1258,7 +1264,7 @@ class DagFileProcessorManager(LoggingMixin):
             self._file_path_queue.append(file_path)
         else:
             self.log.warning(
-                "path %s not in self._processors, this shouldn't happend.",
+                "File %s not in self._processors, this shouldn't happend.",
                 file_path)
 
     def _timeout(self):

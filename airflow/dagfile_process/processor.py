@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import pickle
 
 from celery import Celery
 from airflow import configuration as conf
@@ -37,28 +36,21 @@ def file_processor(do_pickle, dag_ids, file_changed, dag_contents):
         if not os.path.exists(dag_folder):
             os.makedirs(dag_folder)
 
-        dagbag_folder = conf.get('core', 'DAGBAGS_FOLDER')
-        if not os.path.exists(dagbag_folder):
-            os.makedirs(dagbag_folder)
-
         for name,content in dag_contents.items():
             file_path = os.path.join(dag_folder, name)
             with open(file_path, 'w', encoding='utf8') as dagfile:
                 dagfile.writelines(content)
             log.debug("Dag_contents have been saved in %s", file_path)
 
-            mod_name, _ = os.path.splitext(name)
-            dagbag_path = os.path.join(dagbag_folder, ''.join([mod_name, '.dagbag']))
-            log.debug("Getting dagbag file %s", dagbag_path)
     else:
         log.error("Args.dag_contents is not dict")
         return
 
     from airflow import jobs, settings
     settings.configure_orm()
+
     scheduler_job = jobs.SchedulerJob(dag_ids=dag_ids, log=log)
-    dags = scheduler_job.process_file(file_path, dagbag_path, file_changed, do_pickle)
-    log.info("File %s's processing has finished.", file_path)
+    dags = scheduler_job.process_file(file_path, file_changed, do_pickle)
 
     if len(dags) > 0:
         # Handle cases where a DAG run state is set (perhaps manually) to
@@ -82,6 +74,7 @@ def file_processor(do_pickle, dag_ids, file_changed, dag_contents):
                                                    State.UP_FOR_RESCHEDULE],
                                                   State.NONE)
 
+    log.info("File %s's processing has finished.", file_path)
 
 
 

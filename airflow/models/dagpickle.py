@@ -18,7 +18,8 @@
 # under the License.
 
 import dill
-from sqlalchemy import Column, Integer, PickleType, Text
+from sqlalchemy import Column, Integer, PickleType, Text, String
+from sqlalchemy.ext.hybrid import hybrid_property
 
 from airflow.models.base import Base
 from airflow.utils import timezone
@@ -50,3 +51,19 @@ class DagPickle(Base):
             dag.template_env = None
         self.pickle_hash = hash(dag)
         self.pickle = dag
+
+
+class SimpleDagBagPickle(Base):
+    """
+    """
+
+    file_name = Column(String(100), primary_key=True)
+    upgrade_dttm = Column(UtcDateTime) # insure change or not, it should increase 1 per upgrade.
+    pickle = Column(PickleType(pickler=dill))
+
+    __tablename__ = "simple_dagbag_pickle"
+
+    def __init__(self, file_name):
+        self.file_name = file_name
+
+
