@@ -19,7 +19,6 @@
 
 import dill
 from sqlalchemy import Column, Integer, PickleType, Text, String
-from sqlalchemy.ext.hybrid import hybrid_property
 
 from airflow.models.base import Base
 from airflow.utils import timezone
@@ -57,13 +56,38 @@ class SimpleDagBagPickle(Base):
     """
     """
 
-    file_name = Column(String(100), primary_key=True)
-    upgrade_dttm = Column(UtcDateTime) # insure change or not, it should increase 1 per upgrade.
-    pickle = Column(PickleType(pickler=dill))
+    _file_name = Column(String(100), primary_key=True)
+    _upgrade_dttm = Column(UtcDateTime) # insure change or not, it should increase 1 per upgrade.
+    _pickle = Column(PickleType(pickler=dill))
 
     __tablename__ = "simple_dagbag_pickle"
 
     def __init__(self, file_name):
-        self.file_name = file_name
+        self._file_name = file_name
 
+    @property
+    def pickle(self):
+        return self._pickle
+
+    @pickle.setter
+    def pickle(self, pickle):
+        if hasattr(pickle, 'template_env'):
+            pickle.template_env = None
+        self._pickle = pickle
+
+    @property
+    def upgrade_dttm(self):
+        return self._upgrade_dttm
+
+    @upgrade_dttm.setter
+    def upgrade_dttm(self, dttm):
+        self._upgrade_dttm = dttm
+
+    @property
+    def file_name(self):
+        return self.file_name
+
+    @file_name.setter
+    def file_name(self, file_name):
+        self._file_name = file_name
 

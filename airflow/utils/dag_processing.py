@@ -1237,8 +1237,9 @@ class DagFileProcessorManager(LoggingMixin):
                 .filter(SP.file_name == file_name)\
                 .first()
 
+            naive_dttm = timezone.make_naive(orm_sp.upgrade_dttm)
             if orm_sp \
-                    and (orm_sp.upgrade_dttm - self._file_last_changed[file_path]).total_seconds() > 0 \
+                    and (naive_dttm - self._file_last_changed[file_path]).total_seconds() > 0 \
                     and isinstance(orm_sp.pickle, SimpleDagBag):
                 self.log.info("Success! file %s has been upgraded "
                               "in table simple_dagbag_pickle.", file_path)
