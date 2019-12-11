@@ -54,6 +54,7 @@ from airflow.utils import timezone
 from airflow.utils.helpers import reap_process_group
 from airflow.utils.db import provide_session
 from airflow.utils.log.logging_mixin import LoggingMixin
+from datetime import datetime
 
 if six.PY2:
     ConnectionError = IOError
@@ -1203,7 +1204,15 @@ class DagFileProcessorManager(LoggingMixin):
         while (self._parallelism - len(self._processors) > 0 and
                len(self._file_path_queue) > 0):
             file_path = self._file_path_queue.pop(0)
-            processor = self._processor_factory(file_path)
+
+            file_last_changed_on_disk = datetime.fromtimestamp(os.path.getmtime(file_path))
+            if file_path in self._last_changed_time and file_last_changed_on_disk == self._last_changed_time[file_path]:
+                file_changed = False
+            else:
+                file_changed = True
+                self._last_changed_time[file_path] = file_last_changed_on_disk
+
+            processor = self._processor_factory(file_path, file_changed)
 
             processor.start()
             self.log.debug(

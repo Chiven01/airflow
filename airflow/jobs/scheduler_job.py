@@ -73,7 +73,8 @@ class DagFileProcessor(AbstractDagFileProcessor, LoggingMixin):
     # Counter that increments every time an instance of this class is created
     class_creation_counter = 0
 
-    def __init__(self, file_path, pickle_dags, dag_id_white_list):
+    def __init__(self, file_path, pickle_dags, dag_id_white_list, file_changed):
+        self._file_changed = file_changed
         self._file_path = file_path
 
         # The process that was launched to process the given .
@@ -100,7 +101,8 @@ class DagFileProcessor(AbstractDagFileProcessor, LoggingMixin):
                             file_path,
                             pickle_dags,
                             dag_id_white_list,
-                            thread_name):
+                            thread_name,
+                            file_changed):
         """
         Process the given file.
 
@@ -145,7 +147,7 @@ class DagFileProcessor(AbstractDagFileProcessor, LoggingMixin):
             log.info("Started process (PID=%s) to work on %s",
                      os.getpid(), file_path)
             scheduler_job = SchedulerJob(dag_ids=dag_id_white_list, log=log)
-            result = scheduler_job.process_file(file_path, pickle_dags)
+            result = scheduler_job.process_file(file_path, pickle_dags, file_changed)
             result_channel.send(result)
             end_time = time.time()
             log.info(
@@ -176,6 +178,7 @@ class DagFileProcessor(AbstractDagFileProcessor, LoggingMixin):
                 self._pickle_dags,
                 self._dag_id_white_list,
                 "DagFileProcessor{}".format(self._instance_id),
+                self._file_changed,
             ),
             name="DagFileProcessor{}-Process".format(self._instance_id)
         )
@@ -1328,10 +1331,11 @@ class SchedulerJob(BaseJob):
         known_file_paths = list_py_file_paths(self.subdir)
         self.log.info("There are %s files in %s", len(known_file_paths), self.subdir)
 
-        def processor_factory(file_path):
+        def processor_factory(file_path, file_changed):
             return DagFileProcessor(file_path,
                                     pickle_dags,
-                                    self.dag_ids)
+                                    self.dag_ids,
+                                    file_changed)
 
         # When using sqlite, we do not use async_mode
         # so the scheduler job and DAG parser don't access the DB at the same time.
@@ -1492,7 +1496,7 @@ class SchedulerJob(BaseJob):
         settings.Session.remove()
 
     @provide_session
-    def process_file(self, file_path, pickle_dags=False, session=None):
+    def process_file(self, file_path, pickle_dags=False, file_changed=False, session=None):
         """
         Process a Python file containing Airflow DAGs.
 
@@ -1549,7 +1553,7 @@ class SchedulerJob(BaseJob):
                 dag = dagbag.get_dag(dag_id)
                 pickle_id = None
                 if pickle_dags:
-                    pickle_id = dag.pickle(session).id
+                    pickle_id = dag.pickle(file_changed, session).id
                 simple_dags.append(SimpleDag(dag, pickle_id=pickle_id))
 
         if len(self.dag_ids) > 0:

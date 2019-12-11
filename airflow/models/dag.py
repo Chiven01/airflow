@@ -1089,20 +1089,25 @@ class DAG(BaseDag, LoggingMixin):
         return d
 
     @provide_session
-    def pickle(self, session=None):
+    def pickle(self, file_changed, session=None):
         dag = session.query(
             DagModel).filter(DagModel.dag_id == self.dag_id).first()
         dp = None
         if dag and dag.pickle_id:
             dp = session.query(DagPickle).filter(
                 DagPickle.id == dag.pickle_id).first()
-        if not dp or dp.pickle != self:
+            if file_changed:
+                session.query(DagPickle).filter(DagPickle.id == dag.pickle_id).delete()
+        if not dp or file_changed:
             dp = DagPickle(dag=self)
             session.add(dp)
             self.last_pickled = timezone.utcnow()
             session.commit()
             self.pickle_id = dp.id
-
+            dag.last_pickled = self.last_pickled
+            dag.pickle_id = dp.id
+            session.merge(dag)
+            session.commit()
         return dp
 
     def tree_view(self):
@@ -1333,7 +1338,7 @@ class DAG(BaseDag, LoggingMixin):
         orm_dag.is_active = True
         orm_dag.last_scheduler_run = sync_time
         orm_dag.default_view = self._default_view
-        orm_dag.description = self.description
+        #orm_dag.description = self.description
         orm_dag.schedule_interval = self.schedule_interval
         session.merge(orm_dag)
         session.commit()
@@ -1495,7 +1500,7 @@ class DagModel(Base):
     # String representing the products
     products = Column(String(2000))
     # Description of the dag
-    description = Column(Text)
+    #description = Column(Text)
     # Default view of the inside the webserver
     default_view = Column(String(25))
     # Schedule interval
