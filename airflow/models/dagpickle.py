@@ -56,14 +56,14 @@ class SimpleDagBagPickle(Base):
     """
     """
 
-    _file_name = Column(String(100), primary_key=True)
-    _upgrade_dttm = Column(UtcDateTime) # insure change or not, it should increase 1 per upgrade.
-    _pickle = Column(PickleType(pickler=dill))
+    file_name = Column('file_name', String(100), primary_key=True)
+    _upgrade_dttm = Column('upgrade_dttm', UtcDateTime) # insure change or not, it should increase 1 per upgrade.
+    _pickle = Column('pickle', PickleType(pickler=dill))
 
     __tablename__ = "simple_dagbag_pickle"
 
     def __init__(self, file_name):
-        self._file_name = file_name
+        self.file_name = file_name
 
     @property
     def pickle(self):
@@ -83,11 +83,4 @@ class SimpleDagBagPickle(Base):
     def upgrade_dttm(self, dttm):
         self._upgrade_dttm = dttm
 
-    @property
-    def file_name(self):
-        return self.file_name
-
-    @file_name.setter
-    def file_name(self, file_name):
-        self._file_name = file_name
 

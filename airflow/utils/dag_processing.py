@@ -33,8 +33,6 @@ import time
 import zipfile
 import math
 import traceback
-import pickle
-from celery import Celery
 from celery import states as celery_states
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
@@ -44,7 +42,6 @@ import enum
 from typing import Optional
 from datetime import datetime, timedelta
 
-import psutil
 from setproctitle import setproctitle
 import six
 from six.moves import reload_module
@@ -266,9 +263,10 @@ class SimpleDagBag(BaseDagBag, LoggingMixin):
 
         :param dagbag:
         """
-        self.dags = dagbag.dags
-        self.file_last_changed = dagbag.file_last_changed
-        self.import_errors = dagbag.import_errors
+        import copy
+        self.dags = copy.deepcopy(dagbag.dags)
+        self.file_last_changed = copy.deepcopy(dagbag.file_last_changed)
+        self.import_errors = copy.deepcopy(dagbag.import_errors)
 
     @provide_session
     def kill_zombies(self, session=None):
@@ -1239,8 +1237,7 @@ class DagFileProcessorManager(LoggingMixin):
 
             naive_dttm = timezone.make_naive(orm_sp.upgrade_dttm)
             if orm_sp \
-                    and (naive_dttm - self._file_last_changed[file_path]).total_seconds() > 0 \
-                    and isinstance(orm_sp.pickle, SimpleDagBag):
+                    and (naive_dttm - self._file_last_changed[file_path]).total_seconds() > 0:
                 self.log.info("Success! file %s has been upgraded "
                               "in table simple_dagbag_pickle.", file_path)
                 file_changed = False
