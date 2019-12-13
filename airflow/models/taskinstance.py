@@ -61,6 +61,8 @@ from airflow.utils.sqlalchemy import UtcDateTime
 from airflow.utils.state import State
 from airflow.utils.timeout import timeout
 
+from airflow.models.hostname import Hostname
+
 
 def clear_task_instances(tis,
                          session,
@@ -833,6 +835,15 @@ class TaskInstance(Base, LoggingMixin):
             self.log.warning("Task Instance already running %s", self)
             session.commit()
             return False
+
+        hostname = session.query(Hostname).filter_by(
+                    dag_id=self.dag_id,
+                    task_id = self.task_id,
+                    execution_date=self.execution_date,
+                    try_number = self.try_number).first()
+            
+        if not hostname:
+            session.add(Hostname(self))        
 
         # print status message
         self.log.info(hr)
