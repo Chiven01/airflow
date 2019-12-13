@@ -977,7 +977,7 @@ class DagFileProcessorManager(LoggingMixin):
 
             # Build up a list of Python files that could contain DAGs
             self.log.info("Searching for files in %s", self._dag_directory)
-            self._file_paths = list_py_file_paths(self._dag_directory)
+            self._file_paths = list_py_file_paths(self._dag_directory, include_examples=False)
             self.last_dag_dir_refresh_time = timezone.utcnow()
             self.log.info("There are %s files in %s", len(self._file_paths), self._dag_directory)
             self.set_file_paths(self._file_paths)
@@ -1237,7 +1237,8 @@ class DagFileProcessorManager(LoggingMixin):
 
             naive_dttm = timezone.make_naive(orm_sp.upgrade_dttm)
             if orm_sp \
-                    and (naive_dttm - self._file_last_changed[file_path]).total_seconds() > 0:
+                    and (naive_dttm - self._file_last_changed[file_path]).total_seconds() > 0\
+                    and isinstance(orm_sp.pickle, SimpleDagBag):
                 self.log.info("Success! file %s has been upgraded "
                               "in table simple_dagbag_pickle.", file_path)
                 file_changed = False
@@ -1369,13 +1370,13 @@ class DagFileProcessorManager(LoggingMixin):
 
         open_slots = self._parallelism - len(self._processors)
         if open_slots > 0 and len(self._file_path_queue) > 0:
-            self.log.info("There are %d open_slot that can parse dagfiles", open_slots)
+            self.log.info("There are %d open_slot.", open_slots)
 
             task_tuples_to_send = []
             for i in range(min(open_slots, len(self._file_path_queue))):
                 file_path = self._file_path_queue[i]
                 if file_path in self._task_args:
-                    self.log.debug("Add file %s , which will be sent to dagfileprocessor worker.", file_path)
+                    self.log.debug("Add file %s.", file_path)
                     task_tuples_to_send.append(self._task_args.get(file_path))
                 else:
                     self.log.warning("File %s not exist in _task_args, this shouldn't happend.", file_path)
@@ -1398,9 +1399,10 @@ class DagFileProcessorManager(LoggingMixin):
 
                 for file_path, result in key_and_async_results:
                     if isinstance(result, ExceptionWithTraceback):
-                        self.log.error("File %s, error when sending Celery tasks:%s\n%s\n", file_path, result.exception, result.traceback)
+                        self.log.error("File %s, Error in send:%s\n%s\n",
+                                       file_path, result.exception, result.traceback)
                     elif result is not None:
-                        self.log.debug("File %s, success when sending Celery tasks", file_path)
+                        self.log.debug("File %s, Success in send.", file_path)
                         self._file_path_queue.remove(file_path)
                         result.backend = cache_result_backend
                         now = timezone.utcnow()

@@ -1209,7 +1209,14 @@ class SchedulerJob(BaseJob):
 
         :param session: session for ORM operations
         """
-        if self.executor.queued_tasks:
+        if not self.executor.queued_tasks:
+            self.log.debug("No tasks in queue.")
+            return
+
+        all_changed_tasks = []
+        queued_tasks_key = list(self.executor.queued_tasks.keys())
+
+        def set_tasks_scheduled(result, items):
             TI = models.TaskInstance
             filter_for_ti_state_change = (
                 [and_(
@@ -1220,8 +1227,7 @@ class SchedulerJob(BaseJob):
                     # ti is not running. And we need to -1 to match the DB record.
                     TI._try_number == try_number - 1,
                     TI.state == State.QUEUED)
-                    for dag_id, task_id, execution_date, try_number
-                    in self.executor.queued_tasks.keys()])
+                    for dag_id, task_id, execution_date, try_number in items])
             ti_query = (session.query(TI)
                         .filter(or_(*filter_for_ti_state_change)))
             tis_to_set_to_scheduled = (ti_query
@@ -1235,13 +1241,21 @@ class SchedulerJob(BaseJob):
             for task_instance in tis_to_set_to_scheduled:
                 task_instance.state = State.SCHEDULED
 
-            task_instance_str = "\n\t".join(
-                [repr(x) for x in tis_to_set_to_scheduled])
-
+            all_changed_tasks.extend(tis_to_set_to_scheduled)
             session.commit()
-            self.log.info("Set the following tasks to scheduled state:\n\t%s", task_instance_str)
+            if result is None:
+                result = 0
+            return result + len(tis_to_set_to_scheduled)
 
-    def _process_dags(self, dagbag, dags, tis_out):
+        # split it into chunks for DML.
+        helpers.reduce_in_chunks(set_tasks_scheduled, queued_tasks_key, 0, self.max_tis_per_query)
+
+        task_instance_str = "\n\t".join(
+            [repr(x) for x in all_changed_tasks])
+        self.log.debug("Set the following %d tasks from queued to scheduled state:\n\t%s",
+                       len(all_changed_tasks), task_instance_str)
+
+    def _process_dags(self, dags, tis_out):
         """
         Iterates over the dags and processes them. Processing includes:
 
@@ -1258,7 +1272,6 @@ class SchedulerJob(BaseJob):
         :rtype: None
         """
         for dag in dags:
-            dag = dagbag.dags.get(dag.dag_id)
             if not dag:
                 self.log.error("DAG ID %s was not found in the DagBag", dag.dag_id)
                 continue
@@ -1338,7 +1351,7 @@ class SchedulerJob(BaseJob):
 
         # Build up a list of Python files that could contain DAGs
         self.log.info("Searching for files in %s", self.subdir)
-        known_file_paths = list_py_file_paths(self.subdir)
+        known_file_paths = list_py_file_paths(self.subdir, include_examples=False)
         self.log.info("There are %s files in %s", len(known_file_paths), self.subdir)
 
         def processor_factory(file_path):
@@ -1473,6 +1486,10 @@ class SchedulerJob(BaseJob):
             self.log.debug("Get Dagbag instance from %s.",file_path)
             dagbag =  models.DagBag(file_path, include_examples=False)
             simple_dagbag = SimpleDagBag(dagbag)
+            # if closed it, and opened again a few days later, then start_date won't be upgraded.
+            # for dag in simple_dagbag.dags.values():
+            #     if dag.is_paused:
+            #         return simple_dagbag
 
             file_name = os.path.split(file_path)[-1]
             orm_sp = session\
@@ -1557,6 +1574,7 @@ class SchedulerJob(BaseJob):
         # Save individual DAGs in the ORM and update DagModel.last_scheduled_time
         for dag in simple_dagbag.dags.values():
             dag.sync_to_db()
+            #dag.upgrade_date()
 
         paused_dag_ids = [dag.dag_id for dag in simple_dagbag.dags.values()
                           if dag.is_paused]
@@ -1568,7 +1586,6 @@ class SchedulerJob(BaseJob):
                 dag = simple_dagbag.dags.get(dag_id)
                 if pickle_dags:
                     dag.pickle(file_changed, session)
-                dags.append(dag)
 
         if len(self.dag_ids) > 0:
             dags = [dag for dag in simple_dagbag.dags.values()
@@ -1584,7 +1601,7 @@ class SchedulerJob(BaseJob):
         # returns true as described in https://bugs.python.org/issue23582 )
         ti_keys_to_schedule = []
 
-        self._process_dags(simple_dagbag, dags, ti_keys_to_schedule)
+        self._process_dags(dags, ti_keys_to_schedule)
 
         for ti_key in ti_keys_to_schedule:
             dag = simple_dagbag.dags[ti_key[0]]

@@ -1595,3 +1595,29 @@ class DagModel(Base):
         except Exception:
             session.rollback()
             raise
+
+    def upgrade_date(self):
+        """ upgrade date after unpickle from DB."""
+        if 'start_date' in self.default_args and self.default_args['start_date']:
+            if isinstance(self.default_args['start_date'], six.string_types):
+                self.default_args['start_date'] = (
+                    timezone.parse(self.default_args['start_date'])
+                )
+                self.timezone = self.default_args['start_date'].tzinfo
+
+            self.default_args['start_date'] = (
+                timezone.convert_to_utc(self.default_args['start_date'])
+            )
+
+        if not hasattr(self, 'timezone') or not self.timezone:
+            self.timezone = settings.TIMEZONE
+
+        if 'end_date' in self.default_args:
+            if isinstance(self.default_args['end_date'], six.string_types):
+                self.default_args['end_date'] = (
+                    timezone.parse(self.default_args['end_date'], timezone=self.timezone)
+                )
+
+            self.default_args['end_date'] = (
+                timezone.convert_to_utc(self.default_args['end_date'])
+            )
