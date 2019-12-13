@@ -135,7 +135,7 @@ class DockerOperator(BaseOperator):
             cpus=1.0,
             docker_url='unix:///var/run/docker.sock',
             env=None,
-            force_pull=False,
+            force_pull=True,
             mem_limit=None,
             host_tmp_dir=None,
             network_mode=None,
@@ -169,7 +169,7 @@ class DockerOperator(BaseOperator):
         self.docker_url = 'unix:///var/run/docker.sock'
         self.env = env or {}
         self.force_pull = force_pull
-        self.image = image
+        self.image = image 
         self.mem_limit = mem_limit
         self.host_tmp_dir = AIRFLOW_TMP
         self.network_mode = 'bridge'
@@ -389,8 +389,6 @@ class DockerOperator(BaseOperator):
                 # 添加映射路径
                 volumes.append(spark_conf_path + ":" + SPARK_CONF_PATH + self.env['HIVE_CONF_DIR'])
                 local_env["SPARK_CONF_DIR"] = SPARK_CONF_PATH + self.env['HIVE_CONF_DIR']
-            # 添加mysql conf 映射
-            volumes.append('/etc/my.cnf' + ":" + '/etc/my.cnf' )
 
             #设置时区环境变量
             local_env["TZ"] = conf.get("core","default_timezone")
