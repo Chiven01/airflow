@@ -25,7 +25,8 @@ from airflow import configuration as conf
 from airflow.configuration import AirflowConfigException
 from airflow.utils.file import mkdirs
 from airflow.utils.helpers import parse_template_string
-
+from airflow.utils.db import provide_session
+from airflow.models.hostname import Hostname
 
 class FileTaskHandler(logging.Handler):
     """
@@ -78,8 +79,8 @@ class FileTaskHandler(logging.Handler):
                                              task_id=ti.task_id,
                                              execution_date=ti.execution_date.isoformat(),
                                              try_number=try_number)
-
-    def _read(self, ti, try_number, metadata=None):
+    @provide_session
+    def _read(self, ti, try_number, metadata=None, session=None):
         """
         Template method that contains custom logic of reading
         logs given the try_number.
@@ -106,10 +107,12 @@ class FileTaskHandler(logging.Handler):
                 log = "*** Failed to load local log file: {}\n".format(location)
                 log += "*** {}\n".format(str(e))
         else:
+            hostname = session.query(Hostname).filter_by(dag_id=ti.dag_id,task_id = ti.task_id,execution_date=ti.execution_date,try_number = try_number).first() 
+            
             url = os.path.join(
-                "http://{ti.hostname}:{worker_log_server_port}/log", log_relative_path
+                "http://{hostname.hostname}:{worker_log_server_port}/log", log_relative_path
             ).format(
-                ti=ti,
+                hostname=hostname,
                 worker_log_server_port=conf.get('celery', 'WORKER_LOG_SERVER_PORT')
             )
             log += "*** Log file does not exist: {}\n".format(location)
