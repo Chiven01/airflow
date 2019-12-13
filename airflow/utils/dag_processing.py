@@ -736,6 +736,7 @@ class DagFileProcessorManager(LoggingMixin):
         :param async_mode: whether to start the manager in async mode
         :type async_mode: bool
         """
+        self._last_changed_time = {}
         self._file_paths = file_paths
         self._file_path_queue = []
         self._dag_directory = dag_directory
