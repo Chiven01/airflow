@@ -16,9 +16,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from datetime import datetime
 from typing import Optional, cast
 
+import pendulum
 import six
+from croniter import croniter
 from sqlalchemy import (
     Column, Integer, String, Boolean, PickleType, Index, UniqueConstraint, func, DateTime, or_,
     and_
@@ -388,7 +391,12 @@ class DagRun(Base, LoggingMixin):
             if task.start_date > self.execution_date and not self.is_backfill:
                 continue
 
-            if task.task_id not in task_ids:
+            #chiven, use utc time.
+            cron = croniter(task.schedule_interval, self.execution_date)
+            # execution date
+            following = cron.get_next(datetime)
+
+            if task.task_id not in task_ids and following < timezone.utcnow():
                 Stats.incr(
                     "task_instance_created-{}".format(task.__class__.__name__),
                     1, 1)

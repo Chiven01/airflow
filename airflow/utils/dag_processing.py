@@ -1312,9 +1312,11 @@ class DagFileProcessorManager(LoggingMixin):
                 elif state == celery_states.FAILURE or state == celery_states.REVOKED:
                     self._fail(file_path)
                 elif state == celery_states.PENDING:
-                    self.log.debug("Waiting for completed, State: %s, File_path: %s.", state, file_path)
+                    self.log.debug("State: %s, File_path: %s, Waiting for completed.",
+                                   state, file_path)
                 else:
-                    self.log.warning("Unexpected state: %s, File_path: %s.", state, file_path)
+                    self.log.warning("Unexpected state: %s, File_path: %s.",
+                                     state, file_path)
             except Exception:
                 self.log.exception("Error syncing the Celery executor, ignoring it.")
 

@@ -966,6 +966,7 @@ class SchedulerJob(BaseJob):
             # Number of tasks that cannot be scheduled because of no open slot in pool
             num_starving_tasks = 0
             num_tasks_in_executor = 0
+            fulled_dags = []
             for current_index, task_instance in enumerate(priority_sorted_task_instances):
                 if open_slots <= 0:
                     self.log.info(
@@ -979,6 +980,10 @@ class SchedulerJob(BaseJob):
                 # Check to make sure that the task concurrency of the DAG hasn't been
                 # reached.
                 dag_id = task_instance.dag_id
+                if dag_id in fulled_dags:
+                    self.log.debug("Not executing %s since dag %s is full.",
+                                   task_instance, dag_id)
+                    continue
                 dag = self._get_dag(dag_id, session)
                 if dag is None:
                     self.log.debug("DAG %s's pickle_id not exist!", dag_id)
@@ -991,11 +996,14 @@ class SchedulerJob(BaseJob):
                     dag_id, current_dag_concurrency, dag_concurrency_limit
                 )
                 if current_dag_concurrency >= dag_concurrency_limit:
-                    self.log.info(
-                        "Not executing %s since the number of tasks running or queued "
-                        "from DAG %s is >= to the DAG's task concurrency limit of %s",
-                        task_instance, dag_id, dag_concurrency_limit
-                    )
+                    # self.log.info(
+                    #     "Not executing %s since the number of tasks running or queued "
+                    #     "from DAG %s is >= to the DAG's task concurrency limit of %s",
+                    #     task_instance, dag_id, dag_concurrency_limit
+                    # )
+                    self.log.debug("Not executing %s since dag %s is full.",
+                                   task_instance, dag_id)
+                    fulled_dags.append(dag_id)
                     continue
 
                 task_obj = dag.task_dict.get(task_instance.task_id, None)
@@ -1241,14 +1249,18 @@ class SchedulerJob(BaseJob):
             for task_instance in tis_to_set_to_scheduled:
                 task_instance.state = State.SCHEDULED
 
-            all_changed_tasks.extend(tis_to_set_to_scheduled)
             session.commit()
+            all_changed_tasks.extend(tis_to_set_to_scheduled)
+
+            # sometimes, result can't be initialized to 0, so we do it manually.
             if result is None:
                 result = 0
             return result + len(tis_to_set_to_scheduled)
 
         # split it into chunks for DML.
         helpers.reduce_in_chunks(set_tasks_scheduled, queued_tasks_key, 0, self.max_tis_per_query)
+        # all left tasks has been set to scheduled, so clear queue.
+        self.executor.queued_tasks.clear()
 
         task_instance_str = "\n\t".join(
             [repr(x) for x in all_changed_tasks])
@@ -1586,6 +1598,9 @@ class SchedulerJob(BaseJob):
                 dag = simple_dagbag.dags.get(dag_id)
                 if pickle_dags:
                     dag.pickle(file_changed, session)
+            else:
+                # delete paused-dag's simple_dagbag_pickle.
+                session.query(SP).filter(SP.file_name == file_name).delete();
 
         if len(self.dag_ids) > 0:
             dags = [dag for dag in simple_dagbag.dags.values()

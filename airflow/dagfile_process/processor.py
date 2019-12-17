@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-
+import logging
 import os
+import sys
+
+from setproctitle import setproctitle
 
 from celery import Celery
 from airflow import configuration as conf
-from airflow.utils.log.logging_mixin import LoggingMixin
+from airflow.utils.log.logging_mixin import LoggingMixin, StreamLogWriter, set_context
 
 section = "dagfileprocessor_celery"
 broker_url = conf.get(section, 'BROKER_URL')
@@ -29,7 +32,10 @@ app = Celery(
 @app.task
 def file_processor(do_pickle, dag_ids, file_changed, dag_contents):
     #todo(chiven): Do not use 'return' to exit, beacause sometimes it will be ambiguous
-    log = LoggingMixin().log
+
+    log = logging.getLogger("airflow.processor")
+    stdout = StreamLogWriter(log, logging.INFO)
+    stderr = StreamLogWriter(log, logging.WARN)
 
     if dag_contents and isinstance(dag_contents, dict):
         dag_folder = conf.get('core', 'DAGS_FOLDER')
@@ -45,6 +51,12 @@ def file_processor(do_pickle, dag_ids, file_changed, dag_contents):
     else:
         log.error("Args.dag_contents is not dict")
         return
+
+    # config log
+    set_context(log, file_path)
+    setproctitle("airflow scheduler - DagFileProcessor {}".format(file_path))
+    sys.stdout = stdout
+    sys.stderr = stderr
 
     from airflow import jobs, settings
     settings.configure_orm()

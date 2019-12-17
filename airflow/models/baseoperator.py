@@ -340,13 +340,14 @@ class BaseOperator(LoggingMixin):
         if wait_for_downstream:
             self.depends_on_past = True
 
-        if schedule_interval:
-            self.log.warning(
-                "schedule_interval is used for %s, though it has "
-                "been deprecated as a task parameter, you need to "
-                "specify it as a DAG parameter instead",
-                self
-            )
+        # chive: still use it.
+        # if schedule_interval:
+        #     self.log.warning(
+        #         "schedule_interval is used for %s, though it has "
+        #         "been deprecated as a task parameter, you need to "
+        #         "specify it as a DAG parameter instead",
+        #         self
+        #     )
         self._schedule_interval = schedule_interval
         self.retries = retries
         self.queue = queue
@@ -545,10 +546,12 @@ class BaseOperator(LoggingMixin):
         that tasks within a DAG always line up. The task still needs a
         schedule_interval as it may not be attached to a DAG.
         """
-        if self.has_dag():
+        if self._schedule_interval:
+            return self._schedule_interval
+        elif self.has_dag():
             return self.dag._schedule_interval
         else:
-            return self._schedule_interval
+            return None
 
     @property
     def priority_weight_total(self):
