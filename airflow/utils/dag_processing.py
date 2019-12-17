@@ -1234,18 +1234,20 @@ class DagFileProcessorManager(LoggingMixin):
                 .query(SP)\
                 .filter(SP.file_name == file_name)\
                 .first()
-
-            naive_dttm = timezone.make_naive(orm_sp.upgrade_dttm)
-            if orm_sp \
-                    and (naive_dttm - self._file_last_changed[file_path]).total_seconds() > 0\
-                    and isinstance(orm_sp.pickle, SimpleDagBag):
-                self.log.info("Success! file %s has been upgraded "
-                              "in table simple_dagbag_pickle.", file_path)
-                file_changed = False
-                self._task_args[file_path][2] = file_changed
+            if orm_sp:
+                naive_dttm = timezone.make_naive(orm_sp.upgrade_dttm)
+                if orm_sp \
+                        and (naive_dttm - self._file_last_changed[file_path]).total_seconds() > 0\
+                        and isinstance(orm_sp.pickle, SimpleDagBag):
+                    self.log.info("Success! file %s has been upgraded "
+                                  "in table simple_dagbag_pickle.", file_path)
+                    file_changed = False
+                    self._task_args[file_path][2] = file_changed
+                else:
+                    self.log.warning("Fail! when file %s was upgraded "
+                                     "in table simple_dagbag_pickle. And try again.", file_path)
             else:
-                self.log.warning("Fail! when file %s was upgraded "
-                                 "in table simple_dagbag_pickle. And try again.", file_path)
+                self.log.debug("%s's simple_dagbag_pickle not exist! Maybe it's paused.", file_path)
 
         if file_path in self._processors:
             self._processors.pop(file_path)

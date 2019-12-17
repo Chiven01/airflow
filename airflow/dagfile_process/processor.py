@@ -33,9 +33,6 @@ app = Celery(
 def file_processor(do_pickle, dag_ids, file_changed, dag_contents):
     #todo(chiven): Do not use 'return' to exit, beacause sometimes it will be ambiguous
 
-    log = logging.getLogger("airflow.processor")
-    stdout = StreamLogWriter(log, logging.INFO)
-    stderr = StreamLogWriter(log, logging.WARN)
 
     if dag_contents and isinstance(dag_contents, dict):
         dag_folder = conf.get('core', 'DAGS_FOLDER')
@@ -46,13 +43,17 @@ def file_processor(do_pickle, dag_ids, file_changed, dag_contents):
             file_path = os.path.join(dag_folder, name)
             with open(file_path, 'w', encoding='utf8') as dagfile:
                 dagfile.writelines(content)
-            log.debug("Dag_contents have been saved in %s", file_path)
+            # this message maybe save to wrong log file, so note it shortly.
+            # print("Dag_contents have been saved in %s" % file_path)
 
     else:
-        log.error("Args.dag_contents is not dict")
+        # print("Args.dag_contents is not dict")
         return
 
     # config log
+    log = logging.getLogger("airflow.processor")
+    stdout = StreamLogWriter(log, logging.INFO)
+    stderr = StreamLogWriter(log, logging.WARN)
     set_context(log, file_path)
     setproctitle("airflow scheduler - DagFileProcessor {}".format(file_path))
     sys.stdout = stdout
