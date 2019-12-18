@@ -1012,9 +1012,9 @@ def scheduler(args):
         signal.signal(signal.SIGINT, sigint_handler)
         signal.signal(signal.SIGTERM, sigint_handler)
         signal.signal(signal.SIGQUIT, sigquit_handler)
-        #sp = subprocess.Popen(['airflow', 'sms_proxy'], close_fds=True)
+        sp = subprocess.Popen(['airflow', 'sms_proxy'], close_fds=True)
         job.run()
-        #sp.kill()
+        sp.kill()
 
 @cli_utils.action_logging
 def serve_logs(args):

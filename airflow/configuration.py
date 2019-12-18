@@ -681,7 +681,7 @@ HIVE_CONF_URL = 'http://svn.sogou-inc.com/svn/sogouime/DataAnalysis/sourceCode/d
 SPARK_CONF_ORIGIN = 'http://svn.sogou-inc.com/svn/sogouime/DataAnalysis/sourceCode/dayu/HIVE_CONF_DIR/js/'
 
 DEFAULT_IMAGE = '10.134.47.208:5000/airflow:latest'
-EXTRA_HOSTS = {'sms.sogou':'10.153.63.35'}
+EXTRA_HOSTS = {'sms.sogou':'10.143.49.238'}
 RSYNC_PROXY = "10.153.63.35:3128"
 
 
