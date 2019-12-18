@@ -1078,11 +1078,13 @@ def worker(args):
     if autoscale is None and conf.has_option("celery", "worker_autoscale"):
         autoscale = conf.get("celery", "worker_autoscale")
     worker = worker.worker(app=celery_app)
+    concurrency = psutil.virtual_memory().total/1024/1024/1024
+
     options = {
         'optimization': 'fair',
         'O': 'fair',
         'queues': args.queues,
-        'concurrency': args.concurrency,
+        'concurrency': concurrency,
         'autoscale': autoscale,
         'hostname': args.celery_hostname,
         'loglevel': conf.get('core', 'LOGGING_LEVEL'),
