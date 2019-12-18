@@ -54,6 +54,7 @@ from airflow.utils import timezone
 from airflow.utils.helpers import reap_process_group
 from airflow.utils.db import provide_session
 from airflow.utils.log.logging_mixin import LoggingMixin
+from airflow.utils.svn import svnclient
 from datetime import datetime
 
 if six.PY2:
@@ -892,6 +893,9 @@ class DagFileProcessorManager(LoggingMixin):
         elapsed_time_since_refresh = (timezone.utcnow() -
                                       self.last_dag_dir_refresh_time).total_seconds()
         if elapsed_time_since_refresh > self.dag_dir_list_interval:
+            # Update dags
+            svnclient.update(self._dag_directory)
+            self.logger.info("Update files in {}".format(self._dag_directory))
             # Build up a list of Python files that could contain DAGs
             self.log.info("Searching for files in %s", self._dag_directory)
             self._file_paths = list_py_file_paths(self._dag_directory)
