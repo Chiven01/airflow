@@ -390,12 +390,15 @@ class DagRun(Base, LoggingMixin):
             if task.start_date > self.execution_date and not self.is_backfill:
                 continue
 
-            #chiven, use utc time.
-            cron = croniter(task.schedule_interval, self.execution_date)
+            # robin & h1
+            execution_date_naive = timezone.make_naive(self.execution_date)
+            cron = croniter(task.schedule_interval, execution_date_naive)
             # execution date
             following = cron.get_next(datetime)
+            # period end date
+            following = cron.get_next(datetime)
 
-            if task.task_id not in task_ids and following < timezone.utcnow():
+            if task.task_id not in task_ids and following < datetime.now():
                 Stats.incr(
                     "task_instance_created-{}".format(task.__class__.__name__),
                     1, 1)

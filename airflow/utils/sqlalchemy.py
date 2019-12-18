@@ -34,9 +34,19 @@ from sqlalchemy import event, exc, select
 from sqlalchemy.types import Text, DateTime, TypeDecorator
 
 from airflow.utils.log.logging_mixin import LoggingMixin
+from airflow import configuration as conf
 
 log = LoggingMixin().log
-utc = pendulum.timezone('UTC')
+local_tz = pendulum.timezone('UTC')
+
+try:
+    tz = conf.get("core", "default_timezone")
+    if tz == "system":
+        local_tz = pendulum.local_timezone()
+    else:
+        local_tz = pendulum.timezone(tz)
+except Exception:
+    pass
 
 
 def setup_event_handlers(engine,
@@ -162,7 +172,7 @@ class UtcDateTime(TypeDecorator):
             elif value.tzinfo is None:
                 raise ValueError('naive datetime is disallowed')
 
-            return value.astimezone(utc)
+            return value.astimezone(local_tz)
 
     def process_result_value(self, value, dialect):
         """
@@ -174,9 +184,9 @@ class UtcDateTime(TypeDecorator):
         """
         if value is not None:
             if value.tzinfo is None:
-                value = value.replace(tzinfo=utc)
+                value = value.replace(tzinfo=local_tz)
             else:
-                value = value.astimezone(utc)
+                value = value.astimezone(local_tz)
 
         return value
 
