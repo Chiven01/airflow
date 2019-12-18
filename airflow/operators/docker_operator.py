@@ -30,7 +30,7 @@ from airflow.utils.decorators import apply_defaults
 from airflow.utils.file import TemporaryDirectory
 from airflow.utils.svn import svnclient
 from airflow.configuration import AIRFLOW_TMP, AIRFLOW_SVN, HADOOP_CONF_PATH, HIVE_CONF_PATH, SPARK_CONF_PATH, \
-    HIVE_CONF_URL, HADOOP_CONF_URL, UGI_URL, SPARK_CONF_ORIGIN, DEFAULT_IMAGE, EXTRA_HOSTS
+    HIVE_CONF_URL, HADOOP_CONF_URL, UGI_URL, SPARK_CONF_ORIGIN, DEFAULT_IMAGE, EXTRA_HOSTS, RSYNC_PROXY
 from airflow import configuration as conf
 from docker import APIClient, tls
 import ast
@@ -393,6 +393,7 @@ class DockerOperator(BaseOperator):
 
             # 设置时区环境变量
             local_env["TZ"] = conf.get("core", "default_timezone")
+            local_env['RSYNC_PROXY'] = RSYNC_PROXY
             bash_command = "/bin/bash -c '" + self.bash_command + "'"
             self.log.info("%s", volumes)
             self.log.info("%s", local_env)
