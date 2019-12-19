@@ -76,7 +76,7 @@ def upgrade():
         op.create_table(
             'dag_pickle',
             sa.Column('id', sa.Integer(), nullable=False),
-            sa.Column('pickle', sa.PickleType(), nullable=True),
+            sa.Column('pickle', sa.LargeBinary(length=1048576), nullable=True),
             sa.Column('created_dttm', sa.DateTime(), nullable=True),
             sa.Column('pickle_hash', sa.BigInteger(), nullable=True),
             sa.PrimaryKeyConstraint('id')

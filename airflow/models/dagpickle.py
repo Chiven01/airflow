@@ -57,7 +57,7 @@ class SimpleDagBagPickle(Base):
     """
 
     file_name = Column('file_name', String(100), primary_key=True)
-    _upgrade_dttm = Column('upgrade_dttm', UtcDateTime) # insure change or not, it should increase 1 per upgrade.
+    _upgrade_dttm = Column('upgrade_dttm', UtcDateTime)
     _pickle = Column('pickle', PickleType(pickler=dill))
 
     __tablename__ = "simple_dagbag_pickle"

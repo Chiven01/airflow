@@ -45,7 +45,7 @@ def upgrade():
             'simple_dagbag_pickle',
             sa.Column('file_name', sa.String(length=100), nullable=False),
             sa.Column('upgrade_dttm', sa.DateTime, nullable=True),
-            sa.Column('pickle', sa.PickleType(), nullable=True),
+            sa.Column('pickle', sa.LargeBinary(length=1048576), nullable=True),
             sa.PrimaryKeyConstraint('file_name')
         )
 
