@@ -21,12 +21,11 @@ import datetime as dt
 import pendulum
 
 from airflow.settings import TIMEZONE
-from airflow import configuration as conf
 
 
 # UTC time zone as a tzinfo instance.
 utc = pendulum.timezone('UTC')
-
+from airflow import configuration as conf
 try:
     tz = conf.get("core", "default_timezone")
     if tz == "system":
@@ -35,7 +34,6 @@ try:
         utc = pendulum.timezone(tz)
 except Exception:
     pass
-
 
 def is_localized(value):
     """
