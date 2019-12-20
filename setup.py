@@ -332,7 +332,6 @@ def do_setup():
             'configparser>=3.5.0, <3.6.0',
             'croniter>=0.3.17, <0.4',
             'dill>=0.2.2, <0.3',
-            'dumb-init>=1.2.2',
             'enum34~=1.1.6;python_version<"3.4"',
             'flask>=1.1.0, <2.0',
             'flask-appbuilder>=1.12.5, <2.0.0',
@@ -367,10 +366,12 @@ def do_setup():
             'tzlocal>=1.4,<2.0.0',
             'unicodecsv>=0.14.1',
             'zope.deprecation>=4.0, <5.0',
+            'M2Crypto==0.35.2',
         ],
         setup_requires=[
             'docutils>=0.14, <1.0',
             'gitpython>=2.0.2',
+            'dumb-init>=1.2.2',
         ],
         extras_require={
             'all': devel_all,
