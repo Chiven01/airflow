@@ -1079,6 +1079,8 @@ def worker(args):
         autoscale = conf.get("celery", "worker_autoscale")
     worker = worker.worker(app=celery_app)
     concurrency = psutil.virtual_memory().total//1024//1024//1024
+    if concurrency > 100:
+        concurrency = concurrency - 20
 
     options = {
         'optimization': 'fair',
