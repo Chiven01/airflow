@@ -390,9 +390,15 @@ class DockerOperator(BaseOperator):
                 volumes.append(spark_conf_path + ":" + SPARK_CONF_PATH + self.env['HIVE_CONF_DIR'])
                 local_env["SPARK_CONF_DIR"] = SPARK_CONF_PATH + self.env['HIVE_CONF_DIR']
 
+            #挂载mysql配置
+            volumes.append('/etc/my.cnf' + ":" + '/etc/my.cnf' )
             #设置时区环境变量
             local_env["TZ"] = conf.get("core","default_timezone")
+            #设置字符集
+            local_env["LANG"] = "en_US.UTF-8"
+            #设置rsync代理
             local_env['RSYNC_PROXY'] = RSYNC_PROXY
+
             bash_command = "/bin/bash -c '" + self.bash_command + "'"
             self.log.info("%s", volumes)
             self.log.info("%s", local_env)
