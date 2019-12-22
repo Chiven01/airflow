@@ -2196,7 +2196,7 @@ class HomeView(AirflowViewMixin, AdminIndexView):
             query = query.filter(
                 ~DM.is_subdag, DM.is_active,
                 DM.products.in_([i.product for i in session.query(models.ProductOwner).filter(
-                    models.ProductOwner.owner == current_user.user.id).all()]) 
+                    models.ProductOwner.owner == current_user.user.id).all()]) | ( DM.products == 'KPI' ) 
             )
         else:
             query = query.filter(
