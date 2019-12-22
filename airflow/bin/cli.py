@@ -1012,9 +1012,9 @@ def scheduler(args):
         signal.signal(signal.SIGINT, sigint_handler)
         signal.signal(signal.SIGTERM, sigint_handler)
         signal.signal(signal.SIGQUIT, sigquit_handler)
-        #sp = subprocess.Popen(['airflow', 'sms_proxy'], close_fds=True)
+        sp = subprocess.Popen(['airflow', 'sms_proxy'], close_fds=True)
         job.run()
-        #sp.kill()
+        sp.kill()
 
 @cli_utils.action_logging
 def serve_logs(args):
@@ -1078,11 +1078,13 @@ def worker(args):
     if autoscale is None and conf.has_option("celery", "worker_autoscale"):
         autoscale = conf.get("celery", "worker_autoscale")
     worker = worker.worker(app=celery_app)
+    concurrency = psutil.virtual_memory().total//1024//1024//1024
+
     options = {
         'optimization': 'fair',
         'O': 'fair',
         'queues': args.queues,
-        'concurrency': args.concurrency,
+        'concurrency': concurrency,
         'autoscale': autoscale,
         'hostname': args.celery_hostname,
         'loglevel': conf.get('core', 'LOGGING_LEVEL'),

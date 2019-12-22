@@ -57,6 +57,7 @@ from airflow.utils.email import get_email_address_list, send_email
 from airflow.utils.log.logging_mixin import LoggingMixin, StreamLogWriter, set_context
 from airflow.jobs.base_job import BaseJob
 from airflow.utils.state import State
+from airflow.utils.svn import svnclient
 
 
 class DagFileProcessor(AbstractDagFileProcessor, LoggingMixin):
@@ -1325,6 +1326,10 @@ class SchedulerJob(BaseJob):
 
         self.log.info("Running execute loop for %s seconds", self.run_duration)
         self.log.info("Processing each file at most %s times", self.num_runs)
+
+        # Update dags
+        svnclient.update(self.subdir)
+        self.logger.info("Update files in {}".format(self.subdir))
 
         # Build up a list of Python files that could contain DAGs
         self.log.info("Searching for files in %s", self.subdir)
