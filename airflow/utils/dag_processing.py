@@ -1379,11 +1379,12 @@ class DagFileProcessorManager(LoggingMixin):
             task_tuples_to_send = []
             for i in range(min(open_slots, len(self._file_path_queue))):
                 file_path = self._file_path_queue[i]
-                if file_path in self._task_args:
+                if file_path in self._task_args and \
+                        file_path not in self._processors:
                     self.log.debug("Add file %s.", file_path)
                     task_tuples_to_send.append(self._task_args.get(file_path))
                 else:
-                    self.log.warning("File %s not exist in _task_args, this shouldn't happend.", file_path)
+                    self.log.warning("File %s isn't in _task_args or is in _processors.", file_path)
 
             if task_tuples_to_send:
                 cache_result_backend = task_tuples_to_send[0][-1].backend
