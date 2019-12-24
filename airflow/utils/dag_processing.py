@@ -1198,7 +1198,7 @@ class DagFileProcessorManager(LoggingMixin):
                 else:
                     self._file_last_changed[file_path] = file_last_changed_on_disk
                     file_changed = True
-                    self.log.debug("File %s has changed.", file_path)
+                    self.log.info("File %s has changed.", file_path)
 
                 file_content = {}
                 file_name = os.path.split(file_path)[-1]

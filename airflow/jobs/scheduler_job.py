@@ -1569,6 +1569,9 @@ class SchedulerJob(BaseJob):
 
         else:
             simple_dagbag = self._get_file_dagbag(file_path, session)
+            if pickle_dags:
+                for dag in simple_dagbag.dags.values():
+                    dag.pickle(file_changed, session)
 
         if not isinstance(simple_dagbag, SimpleDagBag):
             self.log.error("Can't get DagBag instance of %s.", file_path)
